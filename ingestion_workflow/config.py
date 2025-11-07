@@ -100,6 +100,10 @@ class Settings(BaseSettings):
         default=None,
         description="Optional directory containing cached Pubget outputs to reuse before downloading.",
     )
+    elsevier_cache_root: Optional[Path] = Field(
+        default=None,
+        description="Optional directory where Elsevier downloads are cached for reuse across runs.",
+    )
     semantic_scholar_api_key: Optional[str] = Field(
         default=None,
         description="API key for the Semantic Scholar Graph API.",
@@ -119,13 +123,18 @@ class Settings(BaseSettings):
             "are passed to the next extractor."
         ),
     )
+    extraction_workers: int = Field(
+        default=1,
+        description="Number of parallel workers to use during coordinate extraction phases.",
+        ge=1,
+    )
 
     @field_validator("data_root", "cache_root", "ns_pond_root", "ace_html_root", mode="before")
     @classmethod
     def _expand_path(cls, value: str | Path) -> Path:
         return Path(value).expanduser().resolve()
 
-    @field_validator("ace_metadata_root", "pubget_cache_root", mode="before")
+    @field_validator("ace_metadata_root", "pubget_cache_root", "elsevier_cache_root", mode="before")
     @classmethod
     def _expand_optional_path(cls, value: str | Path | None) -> Path | None:
         if value is None:

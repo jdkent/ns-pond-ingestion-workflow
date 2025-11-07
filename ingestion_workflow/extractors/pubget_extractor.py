@@ -6,9 +6,11 @@ import logging
 import re
 import shutil
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Set
+import uuid
 
 import requests
 import pandas as pd
@@ -209,6 +211,9 @@ class PubgetExtractor(Extractor):
             email=context.settings.pubmed_email,
             api_key=context.settings.pubmed_api_key,
         )
+        self._cached_articleset_sources: Dict[int, ArticlesetSource] = {}
+        self._indexed_articleset_files: Set[Path] = set()
+        self._articleset_info_cache: Dict[Path, Optional[Path]] = {}
 
     def supports(self, identifier: Identifier) -> bool:
         normalized = identifier.normalized()
@@ -423,10 +428,16 @@ class PubgetExtractor(Extractor):
 
     def _extract_data(self, articles_dir: Path) -> Path:
         logger.info("Extracting metadata and coordinates")
+        kwargs = {
+            "articles_with_coords_only": True,
+            "n_jobs": 1,
+        }
+        workers = getattr(self.context.settings, "extraction_workers", 1)
+        if workers and workers > 0:
+            kwargs["n_jobs"] = workers
         extracted_dir, exit_code = extract_data_to_csv(
             articles_dir,
-            articles_with_coords_only=True,
-            n_jobs=1,
+            **kwargs,
         )
         if exit_code not in (ExitCode.COMPLETED, ExitCode.INCOMPLETE):
             raise DownloadError(f"Data extraction failed with exit code {exit_code}")
@@ -436,26 +447,53 @@ class PubgetExtractor(Extractor):
         cache_root = self.context.settings.pubget_cache_root
         if cache_root is None or not cache_root.exists():
             return None
+
+        cached = self._cached_articleset_sources.get(pmcid)
+        if cached:
+            return cached
+
         for articlesets_dir in cache_root.rglob("articlesets"):
-            xml_path = self._find_pmcid_in_articlesets(articlesets_dir, pmcid)
-            if xml_path is None:
-                continue
-            info_file = None
-            for candidate in (
-                articlesets_dir.joinpath("info.json"),
-                articlesets_dir.parent.joinpath("info.json"),
-            ):
-                if candidate.exists():
-                    info_file = candidate
-                    break
-            return ArticlesetSource(xml_path=xml_path, info_file=info_file)
+            info_file = self._get_articleset_info_file(articlesets_dir)
+            cached = self._cached_articleset_sources.get(pmcid)
+            if cached:
+                return cached
+            for xml_path in sorted(articlesets_dir.glob("articleset_*.xml")):
+                resolved_xml = xml_path.resolve()
+                if resolved_xml in self._indexed_articleset_files:
+                    continue
+                self._register_articleset_file(resolved_xml, info_file)
+                cached = self._cached_articleset_sources.get(pmcid)
+                if cached:
+                    return cached
+        return self._cached_articleset_sources.get(pmcid)
+
+    def _get_articleset_info_file(self, articlesets_dir: Path) -> Optional[Path]:
+        resolved_dir = articlesets_dir.resolve()
+        if resolved_dir in self._articleset_info_cache:
+            return self._articleset_info_cache[resolved_dir]
+        info_file = self._resolve_articleset_info_file(resolved_dir)
+        self._articleset_info_cache[resolved_dir] = info_file
+        return info_file
+
+    @staticmethod
+    def _resolve_articleset_info_file(articlesets_dir: Path) -> Optional[Path]:
+        for candidate in (
+            articlesets_dir.joinpath("info.json"),
+            articlesets_dir.parent.joinpath("info.json"),
+        ):
+            if candidate.exists():
+                return candidate
         return None
 
-    def _find_pmcid_in_articlesets(self, articlesets_dir: Path, pmcid: int) -> Optional[Path]:
-        for xml_path in sorted(articlesets_dir.glob("articleset_*.xml")):
-            if self._xml_contains_pmcid(xml_path, pmcid):
-                return xml_path
-        return None
+    def _register_articleset_file(self, xml_path: Path, info_file: Optional[Path]) -> None:
+        pmcids = self._extract_pmcids_from_xml(xml_path)
+        if not pmcids:
+            self._indexed_articleset_files.add(xml_path)
+            return
+        source = ArticlesetSource(xml_path=xml_path, info_file=info_file)
+        for pmcid in pmcids:
+            self._cached_articleset_sources.setdefault(pmcid, source)
+        self._indexed_articleset_files.add(xml_path)
 
     def _download_articles_batch(
         self, pmcids: Sequence[int]
@@ -473,10 +511,13 @@ class PubgetExtractor(Extractor):
                 raise DownloadError(f"Pubget download failed with exit code {exit_code}")
             articlesets_path = Path(articlesets_dir)
             info_file = articlesets_path.joinpath("info.json") if articlesets_path else None
+
+            self._persist_batch_to_cache(Path(batch_tmp.name))
+            lookup = self._build_articlesets_lookup(articlesets_path)
             sources: Dict[int, ArticlesetSource] = {}
             missing_in_batch: List[int] = []
             for pmcid in pmcids:
-                xml_path = self._find_pmcid_in_articlesets(articlesets_path, pmcid)
+                xml_path = lookup.get(pmcid)
                 if not xml_path:
                     missing_in_batch.append(pmcid)
                     continue
@@ -502,6 +543,43 @@ class PubgetExtractor(Extractor):
             batch_tmp.cleanup()
             raise
 
+    def _persist_batch_to_cache(self, batch_dir: Path) -> Optional[Path]:
+        cache_root = self.context.settings.pubget_cache_root
+        if cache_root is None:
+            return None
+        try:
+            cache_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.warning(
+                "Failed to prepare pubget cache directory",
+                extra={"path": str(cache_root), "error": str(exc)},
+            )
+            return None
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        cache_dir = cache_root / f"batch_{timestamp}_{uuid.uuid4().hex[:8]}"
+        try:
+            shutil.copytree(batch_dir, cache_dir)
+        except FileExistsError:
+            # Extremely unlikely due to UUID, but guard to avoid raising.
+            logger.info(
+                "Pubget cache destination already exists; skipping persistence",
+                extra={"path": str(cache_dir)},
+            )
+            return cache_dir
+        except OSError as exc:
+            logger.warning(
+                "Failed to persist Pubget batch to cache",
+                extra={"source": str(batch_dir), "dest": str(cache_dir), "error": str(exc)},
+            )
+            return None
+
+        logger.info(
+            "Persisted Pubget batch to cache",
+            extra={"source": str(batch_dir), "dest": str(cache_dir)},
+        )
+        return cache_dir
+
     def _materialize_articleset(self, source: ArticlesetSource, destination: Path) -> Path:
         destination.mkdir(parents=True, exist_ok=True)
         if source.info_file and source.info_file.exists():
@@ -510,21 +588,37 @@ class PubgetExtractor(Extractor):
         self._sanitize_articlesets(destination)
         return destination
 
+    def _build_articlesets_lookup(self, articlesets_dir: Path) -> Dict[int, Path]:
+        lookup: Dict[int, Path] = {}
+        if not articlesets_dir.exists():
+            return lookup
+        for xml_path in sorted(articlesets_dir.glob("articleset_*.xml")):
+            resolved_xml = xml_path.resolve()
+            pmcids = self._extract_pmcids_from_xml(resolved_xml)
+            for pmcid in pmcids:
+                lookup[pmcid] = resolved_xml
+        return lookup
+
     @staticmethod
-    def _xml_contains_pmcid(xml_path: Path, pmcid: int) -> bool:
+    def _extract_pmcids_from_xml(xml_path: Path) -> Set[int]:
+        pmcids: Set[int] = set()
         try:
             tree = etree.parse(str(xml_path))
         except (OSError, etree.XMLSyntaxError):
-            return False
-        target = str(pmcid)
+            return pmcids
         for node in tree.iterfind(".//article-id[@pub-id-type='pmcid']"):
             text = (node.text or "").strip()
             if not text:
                 continue
             normalized = text.replace("PMC", "").strip()
-            if normalized == target:
-                return True
-        return False
+            if not normalized or not normalized.isdigit():
+                continue
+            try:
+                pmcid = int(normalized)
+            except ValueError:
+                continue
+            pmcids.add(pmcid)
+        return pmcids
 
     def _sanitize_articlesets(self, articlesets_dir: Path) -> None:
         """

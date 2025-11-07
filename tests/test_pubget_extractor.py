@@ -99,3 +99,70 @@ def test_pubget_extractor_prefers_cached_articlesets(tmp_path: Path):
     assert destination.is_dir()
     cached_files = list(destination.glob("articleset_*.xml"))
     assert cached_files, "Expected cached articleset to be materialized."
+
+
+def test_pubget_extractor_persists_batches(tmp_path: Path):
+    cache_root = tmp_path / "pubget_cache"
+    batch_dir = tmp_path / "batch"
+    articlesets_dir = batch_dir / "query" / "articlesets"
+    articlesets_dir.mkdir(parents=True)
+    dummy_xml = articlesets_dir / "articleset_00000.xml"
+    dummy_xml.write_text("<pmc-articleset></pmc-articleset>", encoding="utf-8")
+
+    settings = Settings(
+        data_root=tmp_path / "data",
+        cache_root=tmp_path / "cache",
+        ns_pond_root=tmp_path / "pond",
+        pubget_cache_root=cache_root,
+    )
+    storage = StorageManager(settings)
+    storage.prepare()
+    context = ExtractorContext(storage=storage, settings=settings)
+    extractor = PubgetExtractor(context)
+
+    persisted = extractor._persist_batch_to_cache(batch_dir)
+
+    assert persisted is not None
+    assert persisted.is_dir()
+    assert (persisted / "query" / "articlesets" / "articleset_00000.xml").exists()
+
+
+def test_locate_cached_articleset_indexes_files_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    cache_root = tmp_path / "pubget_cache"
+    articlesets_dir = cache_root / "batch" / "query" / "articlesets"
+    articlesets_dir.mkdir(parents=True)
+    xml_path = articlesets_dir / "articleset_00000.xml"
+    xml_path.write_text(
+        """
+        <pmc-articleset>
+            <article><front><article-meta><article-id pub-id-type="pmcid">PMC100</article-id></article-meta></front></article>
+            <article><front><article-meta><article-id pub-id-type="pmcid">PMC200</article-id></article-meta></front></article>
+        </pmc-articleset>
+        """,
+        encoding="utf-8",
+    )
+    settings = Settings(
+        data_root=tmp_path / "data",
+        cache_root=tmp_path / "cache",
+        ns_pond_root=tmp_path / "pond",
+        pubget_cache_root=cache_root,
+    )
+    storage = StorageManager(settings)
+    storage.prepare()
+    context = ExtractorContext(storage=storage, settings=settings)
+    extractor = PubgetExtractor(context)
+
+    call_counter = {"count": 0}
+    original = extractor._extract_pmcids_from_xml
+
+    def _tracking(xml_file: Path):
+        call_counter["count"] += 1
+        return original(xml_file)
+
+    monkeypatch.setattr(extractor, "_extract_pmcids_from_xml", _tracking)
+
+    assert extractor._locate_cached_articleset(100) is not None
+    first_calls = call_counter["count"]
+    assert first_calls == 1
+    assert extractor._locate_cached_articleset(200) is not None
+    assert call_counter["count"] == first_calls

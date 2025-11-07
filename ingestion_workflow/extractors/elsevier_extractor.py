@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
+import re
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, List, Sequence, Dict, Optional
 
@@ -22,10 +25,133 @@ from elsevier_coordinate_extraction.extract.coordinates import (
     extract_coordinates,
     _manual_extract_tables,
 )
-from elsevier_coordinate_extraction.types import ArticleContent
+from elsevier_coordinate_extraction.types import ArticleContent, build_article_content
 from elsevier_coordinate_extraction.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+class ElsevierArticleCache:
+    """Persists Elsevier article payloads for reuse across runs."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def load(self, record: dict[str, str]) -> Optional[ArticleContent]:
+        for identifier_type in ("doi", "pmid"):
+            identifier = (record.get(identifier_type) or "").strip()
+            if not identifier:
+                continue
+            article = self._load_identifier(identifier_type, identifier)
+            if article:
+                logger.info(
+                    "Using cached Elsevier article",
+                    extra={"identifier_type": identifier_type, "identifier": identifier},
+                )
+                return article
+        return None
+
+    def store(self, article: ArticleContent) -> None:
+        base_metadata = self._normalized_metadata(article)
+        lookup_obj = base_metadata.get("identifier_lookup")
+        lookup = lookup_obj if isinstance(lookup_obj, dict) else {}
+        identifiers: list[tuple[str, str]] = []
+        identifiers.append(("doi", article.doi))
+        if lookup.get("doi"):
+            identifiers.append(("doi", str(lookup["doi"])) )
+        if lookup.get("pmid"):
+            identifiers.append(("pmid", str(lookup["pmid"])) )
+        if isinstance(base_metadata.get("pmid"), str):
+            identifiers.append(("pmid", str(base_metadata["pmid"])) )
+
+        seen: set[tuple[str, str]] = set()
+        for identifier_type, identifier in identifiers:
+            identifier = (identifier or "").strip()
+            if not identifier:
+                continue
+            key = (identifier_type, identifier)
+            if key in seen:
+                continue
+            seen.add(key)
+            self._write_entry(identifier_type, identifier, article, base_metadata)
+
+    def _write_entry(self, identifier_type: str, identifier: str, article: ArticleContent, metadata: dict[str, object]) -> None:
+        entry_dir = self._entry_dir(identifier_type, identifier)
+        entry_dir.mkdir(parents=True, exist_ok=True)
+        article_path = entry_dir / "article.xml"
+        article_path.write_bytes(article.payload)
+
+        entry_metadata = dict(metadata)
+        entry_metadata.update(
+            {
+                "cache_identifier_type": identifier_type,
+                "cache_identifier": identifier,
+                "cached_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        metadata_path = entry_dir / "metadata.json"
+        metadata_path.write_text(json.dumps(entry_metadata, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def _normalized_metadata(article: ArticleContent) -> dict[str, object]:
+        metadata = dict(article.metadata)
+        lookup = metadata.get("identifier_lookup")
+        if not isinstance(lookup, dict):
+            lookup = {}
+        metadata["identifier_lookup"] = lookup
+        if not metadata.get("doi"):
+            metadata["doi"] = article.doi
+        metadata.setdefault("content_type", article.content_type)
+        metadata.setdefault("format", article.format)
+        if lookup.get("pmid") and not metadata.get("pmid"):
+            metadata["pmid"] = lookup["pmid"]
+        return metadata
+
+    def _load_identifier(self, identifier_type: str, identifier: str) -> Optional[ArticleContent]:
+        entry_dir = self._entry_dir(identifier_type, identifier)
+        article_path = entry_dir / "article.xml"
+        if not article_path.exists():
+            return None
+        payload = article_path.read_bytes()
+        metadata_path = entry_dir / "metadata.json"
+        metadata: dict[str, object] = {}
+        if metadata_path.exists():
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                metadata = {}
+        doi = (metadata.get("doi") or "").strip()
+        if not doi and identifier_type == "doi":
+            doi = identifier
+        lookup = metadata.get("identifier_lookup") or {}
+        if not doi and isinstance(lookup, dict):
+            doi = (lookup.get("doi") or "").strip()
+        cached_at = metadata.get("cached_at")
+        retrieved_at = None
+        if isinstance(cached_at, str):
+            try:
+                retrieved_at = datetime.fromisoformat(cached_at)
+            except ValueError:
+                retrieved_at = None
+        metadata.setdefault("identifier_lookup", lookup if isinstance(lookup, dict) else {})
+        return build_article_content(
+            doi=doi or identifier,
+            payload=payload,
+            content_type=str(metadata.get("content_type") or "application/xml"),
+            fmt=str(metadata.get("format") or "xml"),
+            metadata=metadata,
+            retrieved_at=retrieved_at,
+        )
+
+    def _entry_dir(self, identifier_type: str, identifier: str) -> Path:
+        slug = self._slug_identifier(identifier)
+        return self.root / identifier_type / slug
+
+    @staticmethod
+    def _slug_identifier(identifier: str) -> str:
+        slug = re.sub(r"[^a-zA-Z0-9_.-]+", "_", identifier)
+        return slug.strip("_") or "article"
 
 
 class ElsevierExtractor(Extractor):
@@ -36,6 +162,11 @@ class ElsevierExtractor(Extractor):
     def __init__(self, context):
         super().__init__(context)
         self._api_settings = get_settings()
+        cache_root = context.settings.elsevier_cache_root or (context.storage.cache_root / "elsevier")
+        self._article_cache = ElsevierArticleCache(cache_root)
+        self._supports_extraction_workers = "extraction_workers" in inspect.signature(
+            extract_coordinates
+        ).parameters
 
     def supports(self, identifier: Identifier) -> bool:
         normalized = identifier.normalized()
@@ -62,6 +193,10 @@ class ElsevierExtractor(Extractor):
         record_lookup: Dict[tuple[str, str], Identifier] = {}
         batch_records = []
         for identifier, record in supported:
+            cached_article = self._article_cache.load(record)
+            if cached_article:
+                article_map[identifier.hash_id] = cached_article
+                continue
             key = (
                 record.get("doi", "") or "",
                 record.get("pmid", "") or "",
@@ -70,7 +205,7 @@ class ElsevierExtractor(Extractor):
             batch_records.append(record)
 
         try:
-            articles = self._download_articles(batch_records)
+            articles = self._download_articles(batch_records) if batch_records else []
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Elsevier batch download failed; no articles retrieved.",
@@ -87,18 +222,52 @@ class ElsevierExtractor(Extractor):
             identifier = record_lookup.get(key)
             if identifier:
                 article_map[identifier.hash_id] = article
+            self._article_cache.store(article)
 
         total_supported = len(supported)
         missing_coordinates: List[str] = []
         download_failures: List[str] = []
         coordinates_found_count = 0
+
+        articles_to_process: List[tuple[Identifier, ArticleContent]] = []
         for identifier, _record in supported:
             article = article_map.get(identifier.hash_id)
             if not article:
                 download_failures.append(self._identifier_label(identifier))
                 continue
+            articles_to_process.append((identifier, article))
+
+        studies_by_doi: Dict[str, dict] = {}
+        if articles_to_process:
+            batch_analysis = self._run_coordinate_extraction(
+                [article for _, article in articles_to_process]
+            )
+            studies = batch_analysis.get("studyset", {}).get("studies", [])
+            for study in studies:
+                doi = (study.get("doi") or "").strip().lower()
+                if not doi:
+                    continue
+                studies_by_doi.setdefault(doi, study)
+
+        for identifier, article in articles_to_process:
+            article_doi = (article.doi or "").strip().lower()
+            if not article_doi:
+                download_failures.append(self._identifier_label(identifier))
+                logger.warning(
+                    "Elsevier article missing DOI for batch coordination",
+                    extra={"identifier": self._identifier_label(identifier)},
+                )
+                continue
+            study = studies_by_doi.get(article_doi)
+            if study is None:
+                download_failures.append(self._identifier_label(identifier))
+                logger.warning(
+                    "Missing batch study for Elsevier article",
+                    extra={"doi": article.doi},
+                )
+                continue
             try:
-                result = self._process_article(identifier, article)
+                result = self._process_article(identifier, article, study=study)
                 results.append(result)
                 if result.extra_metadata.get("coordinates_found"):
                     coordinates_found_count += 1
@@ -148,26 +317,19 @@ class ElsevierExtractor(Extractor):
         with self._quiet_httpx():
             return asyncio.run(_runner())
 
-    def _download_article_record(self, record: dict[str, str]) -> Optional[ArticleContent]:
-        with self._quiet_httpx():
-            try:
-                articles = self._download_articles([record])
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code != 404:
-                    logger.warning(
-                        "Elsevier API error for record; skipping.",
-                        extra={"record": record, "status": exc.response.status_code},
-                    )
-                return None
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Elsevier download error for record; skipping.",
-                    extra={"record": record, "error": str(exc)},
-                )
-                return None
-        return articles[0] if articles else None
+    def _run_coordinate_extraction(self, articles: Iterable[ArticleContent]) -> dict:
+        kwargs: Dict[str, object] = {}
+        workers = getattr(self.context.settings, "extraction_workers", 1)
+        if self._supports_extraction_workers and workers:
+            kwargs["extraction_workers"] = workers
+        return extract_coordinates(articles, **kwargs)
 
-    def _process_article(self, identifier: Identifier, article) -> DownloadResult:
+    def _process_article(
+        self,
+        identifier: Identifier,
+        article,
+        study: dict,
+    ) -> DownloadResult:
         paths = self.context.storage.paths_for(identifier)
         source_dir = paths.source_for(self.name)
         processed_dir = paths.processed_for(self.name)
@@ -183,11 +345,11 @@ class ElsevierExtractor(Extractor):
             encoding="utf-8",
         )
 
-        analyses = extract_coordinates([article])
-        studies = analyses.get("studyset", {}).get("studies", [])
+        analyses_payload = {"studyset": {"studies": [study]}}
+        studies = [study]
         coordinates_path = processed_dir / "coordinates.csv"
         analyses_path = processed_dir / "analyses.json"
-        analyses_path.write_text(json.dumps(analyses, indent=2), encoding="utf-8")
+        analyses_path.write_text(json.dumps(analyses_payload, indent=2), encoding="utf-8")
 
         coordinate_rows = self._coordinate_rows(studies)
         coordinates_found = bool(coordinate_rows)
