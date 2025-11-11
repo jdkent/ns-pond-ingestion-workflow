@@ -16,4 +16,15 @@ Caching will be decoupled from other services and the extractors.
 The cache will be applied in the pipeline files as a way of filtering
 what files need to be processed, then those files will be passed to the
 next step in the pipeline while the cached results are read from disk.
+
+Creating an index of cached results will be difficult for the existing
+pubget and ace results since they are organized haphazardly in directories.
+There will need to be an iterative index builder that can scan these directories,
+place files into the cache index based on potentially just pmid or pmcid,
+as the cache is looking for files based on ids returned from a search.
+
+I would like an independent index function, that can
+scan existing cached files and build the cache index,
+but can also be called to search for a specific cached result
+that may not be in the index yet.
 """

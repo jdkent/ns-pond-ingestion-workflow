@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 import json
 
 from .download import DownloadSource
-
+from .metadata import ArticleMetadata
 
 @dataclass
 class ExtractedTable:
@@ -40,6 +40,7 @@ class ExtractedContent:
     hash_id: str
     source: DownloadSource
     full_text_path: Optional[Path] = None
+    metadata: Optional[ArticleMetadata] = None
     tables: List[ExtractedTable] = field(default_factory=list)
     has_coordinates: bool = False
     extracted_at: datetime = field(default_factory=datetime.now)
