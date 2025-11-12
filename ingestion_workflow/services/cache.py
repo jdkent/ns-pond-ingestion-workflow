@@ -34,6 +34,8 @@ from filelock import FileLock
 
 from ingestion_workflow.config import Settings
 from ingestion_workflow.models import (
+    CreateAnalysesResult,
+    CreateAnalysesResultEntry,
     CreateAnalysesResultIndex,
     DownloadIndex,
     DownloadResult,
@@ -187,6 +189,48 @@ def load_create_analyses_index(
         extractor_name,
         index_cls=CreateAnalysesResultIndex,
     )
+
+
+def get_cached_create_analyses_result(
+    settings: Settings,
+    cache_key: str,
+    extractor_name: str | None = None,
+    *,
+    namespace: str = CREATE_ANALYSES_CACHE_NAMESPACE,
+) -> CreateAnalysesResult | None:
+    """Retrieve a cached create-analyses entry if present."""
+
+    index = load_create_analyses_index(
+        settings,
+        extractor_name,
+        namespace=namespace,
+    )
+    entry = index.get(cache_key)
+    if entry is None:
+        return None
+    return entry.clone_payload()
+
+
+def cache_create_analyses_results(
+    settings: Settings,
+    extractor_name: str | None,
+    results: Sequence[CreateAnalysesResult],
+    *,
+    namespace: str = CREATE_ANALYSES_CACHE_NAMESPACE,
+) -> None:
+    """Persist create-analyses results to the cache index."""
+
+    if not results:
+        return
+
+    with _acquire_lock(settings, namespace, extractor_name):
+        index_path = _index_path(settings, namespace, extractor_name)
+        index = CreateAnalysesResultIndex.load(index_path)
+        for result in results:
+            entry = CreateAnalysesResultEntry.from_result(result)
+            index.add_result(entry)
+        index.index_path = index_path
+        index.save()
 
 
 def get_identifier_cache_entry(

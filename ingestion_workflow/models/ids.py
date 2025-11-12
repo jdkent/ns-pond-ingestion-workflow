@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import MutableMapping
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -152,6 +154,26 @@ class Identifier(MutableMapping[str, Optional[str]]):
             raise KeyError(key)
         return key_str.lower()
 
+    def to_dict(self) -> Dict[str, Optional[str]]:
+        """Serialize the identifier to a plain dictionary."""
+        payload = {
+            "neurostore": self.neurostore,
+            "pmid": self.pmid,
+            "doi": self.doi,
+            "pmcid": self.pmcid,
+        }
+        payload["other_ids"] = dict(self.other_ids or {})
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Optional[str]]) -> "Identifier":
+        """Deserialize an Identifier from a mapping."""
+        data = dict(payload)
+        other_ids = data.get("other_ids")
+        if isinstance(other_ids, dict):
+            data["other_ids"] = dict(other_ids)
+        return cls(**data)
+
 
 @dataclass
 class Identifiers:
@@ -274,7 +296,6 @@ class Identifiers:
                 unique_identifiers.append(identifier)
         self.identifiers = unique_identifiers
         self._rebuild_indices()
-
 
     def save(self, file_path: Path | str) -> None:
         """

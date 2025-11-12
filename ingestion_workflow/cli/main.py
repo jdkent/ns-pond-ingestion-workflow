@@ -1,11 +1,18 @@
 """
-This module is responsible for calling the application
-from the command line, setting the yaml config file,
-etc.
+Command line interface for the ingestion workflow.
 """
 
 from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Iterable, Optional
+
 import typer
+
+from ingestion_workflow.config import load_settings
+from ingestion_workflow.models import ArticleExtractionBundle
+from ingestion_workflow.workflow import create_analyses as create_analyses_workflow
 
 app = typer.Typer(
     name="Article Ingestion Workflow",
@@ -34,8 +41,57 @@ def extract():
 
 
 @app.command()
-def create_analyses():
-    pass
+def create_analyses(
+    bundles_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        readable=True,
+        help="Path to JSON containing ArticleExtractionBundle payloads.",
+    ),
+    output_path: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Optional output path for the analyses JSON (defaults to stdout).",
+    ),
+    config_path: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        "-c",
+        exists=False,
+        help="Optional YAML settings override.",
+    ),
+    extractor_name: Optional[str] = typer.Option(
+        None,
+        "--extractor",
+        "-e",
+        help="Extractor namespace to use for cache lookups.",
+    ),
+) -> None:
+    """Execute the create-analyses workflow step for serialized bundles."""
+
+    settings = load_settings(config_path)
+    payload = json.loads(bundles_path.read_text(encoding="utf-8"))
+    bundles = _load_bundles(payload)
+    results = create_analyses_workflow.run_create_analyses(
+        bundles,
+        settings=settings,
+        extractor_name=extractor_name,
+    )
+    serializable = {
+        article_hash: {
+            table_id: collection.to_dict()
+            for table_id, collection in table_map.items()
+        }
+        for article_hash, table_map in results.items()
+    }
+    output = json.dumps(serializable, indent=2, sort_keys=True)
+    if output_path is None:
+        typer.echo(output)
+    else:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(output, encoding="utf-8")
+        typer.echo(f"Wrote analyses to {output_path}")
 
 
 @app.command()
@@ -55,3 +111,20 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def _load_bundles(payload: Any) -> Iterable[ArticleExtractionBundle]:
+    """Deserialize bundles from JSON-compatible payloads."""
+    if isinstance(payload, dict):
+        if "bundles" in payload:
+            payload = payload["bundles"]
+        elif all(isinstance(value, dict) for value in payload.values()):
+            payload = payload.values()
+    if not isinstance(payload, (list, tuple)):
+        raise typer.BadParameter(
+            "Expected a list or mapping of ArticleExtractionBundle payloads."
+        )
+    return [
+        ArticleExtractionBundle.from_dict(item)  # type: ignore[arg-type]
+        for item in payload
+    ]

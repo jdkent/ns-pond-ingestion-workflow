@@ -1,0 +1,63 @@
+interactions:
+- request:
+    body: '{"parsed": {"analyses": [{"name": "Integration Analysis", "description":
+      "LLM-derived", "points": [{"coordinates": [5.0, 10.0, 15.0], "space": "MNI"}]}]}}'
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '154'
+      Content-Type:
+      - application/json
+      User-Agent:
+      - python-requests/2.32.5
+    method: POST
+    uri: https://postman-echo.com/post
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAAA8yQQU7DMBBFr1L9ZeU0tNCNdywrtVwAdTHY08Qo8Rh7CpQod0dJASFOwO7rj/T0
+        5g+g3BTYYTTwpAQ7IFEu7KdEkbpL4QL7OCBSz7DYReUmkwaJi/v5HgoMPBeXQ5pqWOz3h8pzDq/s
+        YZAkRL1CnEj2IZLO0K1Z35j19mhQErmJfnjYYTyOx3E0OIWOv9ROkvtrapk856lGK0VhkaRoT7Fi
+        18rKSQ8DJ1E5aqWXNEEppS64Wbl+LhJhQM5x0oqjEx9iA4vmIySzeMowOBfOFTUcZ/xFW4lV5pcz
+        Fy31ZnW7WW1h8F6dJL9R9uyrlEUFFq1qKj94WCzr5S+fjmOjLSzW2zuMBrPMP1r8nLvvJ2xd/x12
+        LjB+AgAA//8DAKlbnDQzAgAA
+    headers:
+      CF-RAY:
+      - 99d957e04bfd6e72-DFW
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Wed, 12 Nov 2025 22:07:37 GMT
+      Server:
+      - cloudflare
+      Set-Cookie:
+      - sails.sid=s%3AYf6JqeA7OEat7xdpwlYRj9WERx8PTRi7.QS8c6taEZPITpQfJCqsk6GMxa3l8HpG4iMGNOf4s6IQ;
+        Path=/; HttpOnly
+      - __cf_bm=XJ5QTKAmKZlVQGNVlMJqtv2tLYlmnrY9o.IB7N0oxqc-1762985257-1.0.1.1-pDvIzJhbO8jo8J8Ajtq1hqbbuVekUNGxZIiusILii.JgwjWfeUgmHHbE7hbdyfamv1ESWZrK75t9Wi9VPMYP2VWEwnE_VIv9NMu04EA9P1o;
+        path=/; expires=Wed, 12-Nov-25 22:37:37 GMT; domain=.postman-echo.com; HttpOnly;
+        Secure; SameSite=None
+      - _cfuvid=tRxwqMAq8Kde9Zth8WJGdMiewUxMTwFg16IBsQcFC1E-1762985257095-0.0.1.1-604800000;
+        path=/; domain=.postman-echo.com; HttpOnly; Secure; SameSite=None
+      Transfer-Encoding:
+      - chunked
+      cf-cache-status:
+      - DYNAMIC
+      etag:
+      - W/"233-uTVzu1V36ckflHownnlGuzPn68s"
+      vary:
+      - Accept-Encoding
+      x-envoy-upstream-service-time:
+      - '4'
+    status:
+      code: 200
+      message: OK
+version: 1

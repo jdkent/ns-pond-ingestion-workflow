@@ -127,6 +127,11 @@ class Settings(BaseSettings):
         description="API key for the configured LLM provider",
     )
 
+    llm_api_base: Optional[str] = Field(
+        default=None,
+        description="Optional base URL for the configured LLM provider",
+    )
+
     llm_model: str = Field(
         default="gpt-5-mini",
         description="Specific model to use for coordinate extraction",
