@@ -1,0 +1,60 @@
+interactions:
+- request:
+    body: '{"ids": ["DOI:10.1002/hbm.24703"]}'
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '34'
+      Content-Type:
+      - application/json
+      User-Agent:
+      - python-requests/2.32.5
+    method: POST
+    uri: https://api.semanticscholar.org/graph/v1/paper/batch?fields=externalIds
+  response:
+    body:
+      string: '[{"paperId": "185cdce001c430556cfc3721f86a91849d20856d", "externalIds":
+        {"MAG": "2954579665", "DOI": "10.1002/hbm.24703", "CorpusId": 195786675, "PubMed":
+        "31268615"}}]
+
+        '
+    headers:
+      Access-Control-Allow-Origin:
+      - '*'
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '169'
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 12 Nov 2025 00:07:32 GMT
+      Via:
+      - 1.1 ad310b4d7c581c35032fa3fce068e53c.cloudfront.net (CloudFront)
+      X-Amz-Cf-Id:
+      - vkNRiN7zveYhX5pgH-mzv45RGab-OXcIJiDYnJfvktdLrzFgZl3yYw==
+      X-Amz-Cf-Pop:
+      - DFW57-P1
+      X-Cache:
+      - Miss from cloudfront
+      x-amz-apigw-id:
+      - T51myEGiPHcEpuw=
+      x-amzn-Remapped-Connection:
+      - keep-alive
+      x-amzn-Remapped-Content-Length:
+      - '169'
+      x-amzn-Remapped-Date:
+      - Wed, 12 Nov 2025 00:07:32 GMT
+      x-amzn-Remapped-Server:
+      - gunicorn
+      x-amzn-RequestId:
+      - ee18070f-9d85-4c14-a05a-3f27253dc6a9
+    status:
+      code: 200
+      message: OK
+version: 1
