@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, List, Optional
 
 import typer
 
 from ingestion_workflow.config import load_settings
 from ingestion_workflow.models import ArticleExtractionBundle
 from ingestion_workflow.workflow import create_analyses as create_analyses_workflow
+from ingestion_workflow.workflow.orchastrator import run_pipeline
 
 app = typer.Typer(
     name="Article Ingestion Workflow",
@@ -21,8 +22,44 @@ app = typer.Typer(
 
 
 @app.command()
-def run():
-    pass
+def run(
+    config_path: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        "-c",
+        exists=False,
+        help="Optional YAML settings override.",
+    ),
+    stages: Optional[List[str]] = typer.Option(
+        None,
+        "--stages",
+        "-s",
+        help="Subset of pipeline stages to execute in canonical order.",
+    ),
+    manifest_path: Optional[Path] = typer.Option(
+        None,
+        "--manifest",
+        "-m",
+        exists=False,
+        help="Identifiers manifest to use when skipping gather stage.",
+    ),
+    use_cached_inputs: Optional[bool] = typer.Option(
+        None,
+        "--use-cached-inputs/--no-use-cached-inputs",
+        help="Toggle hydration from cached outputs when stages are skipped.",
+    ),
+) -> None:
+    """Run the orchestrated ingestion workflow pipeline."""
+
+    overrides: dict[str, object] = {}
+    if stages:
+        overrides["stages"] = [stage.lower() for stage in stages]
+    if manifest_path is not None:
+        overrides["manifest_path"] = manifest_path
+    if use_cached_inputs is not None:
+        overrides["use_cached_inputs"] = use_cached_inputs
+    settings = load_settings(config_path, overrides=overrides or None)
+    run_pipeline(settings=settings)
 
 
 @app.command()

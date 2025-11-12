@@ -219,6 +219,30 @@ class Settings(BaseSettings):
         ),
     )
 
+    stages: List[str] = Field(
+        default_factory=lambda: [
+            "gather",
+            "download",
+            "extract",
+            "create_analyses",
+            "upload",
+            "sync",
+        ],
+        description="Ordered pipeline stages to execute",
+    )
+
+    manifest_path: Optional[Path] = Field(
+        default=None,
+        description=(
+            "Path to an identifiers manifest when gather stage is skipped"
+        ),
+    )
+
+    use_cached_inputs: bool = Field(
+        default=True,
+        description="Use cached outputs when prerequisite stages are skipped",
+    )
+
     @classmethod
     def from_yaml(cls, yaml_path: Path) -> Settings:
         """
