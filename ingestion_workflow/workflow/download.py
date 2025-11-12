@@ -72,6 +72,28 @@ def _identifiers_from_hashes(
     ]
 
 
+def _partition_supported_identifiers(
+    extractor: BaseExtractor, identifiers: Iterable[Identifier]
+) -> tuple[list[Identifier], list[Identifier]]:
+    supported_fields = getattr(extractor, "_SUPPORTED_IDS", None)
+    identifiers_list = list(identifiers)
+
+    if not supported_fields:
+        return identifiers_list, []
+
+    field_set = {str(field) for field in supported_fields}
+    supported: list[Identifier] = []
+    unsupported: list[Identifier] = []
+
+    for identifier in identifiers_list:
+        if any(getattr(identifier, field, None) for field in field_set):
+            supported.append(identifier)
+        else:
+            unsupported.append(identifier)
+
+    return supported, unsupported
+
+
 def run_downloads(
     identifiers: Identifiers,
     *,
@@ -90,7 +112,14 @@ def run_downloads(
         source = DownloadSource(source_name)
         extractor = _resolve_extractor(source, settings)
 
-        extractor_identifiers = Identifiers(list(remaining))
+        supported, unsupported = _partition_supported_identifiers(
+            extractor, remaining
+        )
+        if not supported:
+            remaining = list(unsupported)
+            continue
+
+        extractor_identifiers = Identifiers(list(supported))
         cached_results, missing = cache.partition_cached_downloads(
             settings,
             extractor_name=source.value,
@@ -98,15 +127,18 @@ def run_downloads(
         )
         collected_results.extend(cached_results)
 
+        next_remaining: List[Identifier] = list(unsupported)
+
         if not missing:
-            remaining = []
+            remaining = next_remaining
             continue
 
         if settings.cache_only_mode:
-            remaining = missing
+            next_remaining.extend(missing)
+            remaining = next_remaining
             continue
 
-        download_results = extractor.download(Identifiers(missing))
+        download_results = extractor.download(Identifiers(list(missing)))
         collected_results.extend(download_results)
 
         successes = [result for result in download_results if result.success]
@@ -118,7 +150,9 @@ def run_downloads(
             )
 
         success_hashes = _successful_hashes(successes)
-        remaining = _identifiers_from_hashes(missing, success_hashes)
+        failures = _identifiers_from_hashes(missing, success_hashes)
+        next_remaining.extend(failures)
+        remaining = next_remaining
 
     return collected_results
 

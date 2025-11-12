@@ -169,6 +169,13 @@ class Settings(BaseSettings):
         description=("Maximum number of parallel workers for concurrent operations"),
     )
 
+    ace_max_workers: int = Field(
+        default=4,
+        description=(
+            "Maximum number of parallel workers dedicated to ACE downloads"
+        ),
+    )
+
     # ===== Behavior flags =====
     force_redownload: bool = Field(
         default=False,
@@ -217,7 +224,9 @@ class Settings(BaseSettings):
             data = yaml.safe_load(fh) or {}
 
         if not isinstance(data, dict):
-            raise ValueError("Settings YAML must contain a mapping at the root")
+            raise ValueError(
+                "Settings YAML must contain a mapping at the root"
+            )
 
         return cls(**data)
 

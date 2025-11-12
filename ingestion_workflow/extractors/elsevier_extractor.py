@@ -35,6 +35,7 @@ from ingestion_workflow.models import (
 class ElsevierExtractor(BaseExtractor):
     """Extractor that uses Elsevier to download and extract article content."""
 
+    _SUPPORTED_IDS = {"pmid", "doi"}
     _EXTENSION_TO_FILETYPE: Dict[str, FileType] = {
         "xml": FileType.XML,
         "pdf": FileType.PDF,

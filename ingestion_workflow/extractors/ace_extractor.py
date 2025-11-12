@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +30,7 @@ logger = logging.getLogger(__name__)
 class ACEExtractor(BaseExtractor):
     """Extractor that uses ACE to download and extract tables from articles."""
 
+    _SUPPORTED_IDS = {"pmid"}
     _HTML_CONTENT_TYPE = "text/html"
 
     def __init__(
@@ -42,21 +45,70 @@ class ACEExtractor(BaseExtractor):
         self._cache_root = self._resolve_cache_root()
 
         update_config(SAVE_ORIGINAL_HTML=True)
-        update_config(DOWNLOAD_ROOT=str(self._cache_root))
-
-        self._scraper = Scraper(
-            str(self._cache_root),
-            api_key=self.settings.pubmed_api_key,
-        )
         self._download_mode = download_mode
 
     def download(self, identifiers: Identifiers) -> list[DownloadResult]:
         if not identifiers:
             return []
 
+        worker_count = self.settings.ace_max_workers
+        if worker_count <= 0:
+            worker_count = self.settings.max_workers
+        worker_count = max(1, worker_count)
+
+        identifiers_list = identifiers.identifiers
+
+        if worker_count == 1 or len(identifiers_list) <= 1:
+            scraper = self._build_scraper()
+            return [
+                self._download_single(identifier, scraper=scraper)
+                for identifier in identifiers_list
+            ]
+
+        ordered_results: list[Optional[DownloadResult]] = [None] * len(
+            identifiers_list
+        )
+
+        thread_local = threading.local()
+
+        def _run(identifier: Identifier) -> DownloadResult:
+            scraper = getattr(thread_local, "scraper", None)
+            if scraper is None:
+                scraper = self._build_scraper()
+                thread_local.scraper = scraper
+            return self._download_single(identifier, scraper=scraper)
+
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            future_map = {
+                executor.submit(_run, identifier): index
+                for index, identifier in enumerate(identifiers_list)
+            }
+            for future in as_completed(future_map):
+                index = future_map[future]
+                identifier = identifiers_list[index]
+                try:
+                    result = future.result()
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    logger.exception(
+                        "ACE download raised exception for PMID %s",
+                        identifier.pmid,
+                    )
+                    result = self._failure(
+                        identifier,
+                        f"ACE download raised an exception: {exc}",
+                    )
+                ordered_results[index] = result
+
         results: list[DownloadResult] = []
-        for identifier in identifiers.identifiers:
-            results.append(self._download_single(identifier))
+        for index, identifier in enumerate(identifiers_list):
+            result = ordered_results[index]
+            if result is None:
+                result = self._failure(
+                    identifier,
+                    "ACE download did not return a result.",
+                )
+            results.append(result)
+
         return results
 
     def extract(
@@ -67,7 +119,12 @@ class ACEExtractor(BaseExtractor):
             "ACEExtractor extract method not implemented."
         )
 
-    def _download_single(self, identifier: Identifier) -> DownloadResult:
+    def _download_single(
+        self,
+        identifier: Identifier,
+        *,
+        scraper: Scraper | None = None,
+    ) -> DownloadResult:
         pmid_value = identifier.pmid
         if not pmid_value:
             message = "ACE download requires a PMID."
@@ -76,10 +133,12 @@ class ACEExtractor(BaseExtractor):
 
         pmid = str(pmid_value).strip()
 
+        active_scraper = scraper or self._build_scraper()
+
         journal = "IngestionWorkflow"
 
         try:
-            file_path, valid = self._scraper.process_article(
+            file_path, valid = active_scraper.process_article(
                 pmid,
                 journal,
                 delay=None,
@@ -110,6 +169,12 @@ class ACEExtractor(BaseExtractor):
             success=True,
             files=[downloaded_file],
             error_message=None,
+        )
+
+    def _build_scraper(self) -> Scraper:
+        return Scraper(
+            str(self._cache_root),
+            api_key=self.settings.pubmed_api_key,
         )
 
     def _resolve_file_path(

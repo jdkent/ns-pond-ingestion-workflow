@@ -20,6 +20,7 @@ def test_ace_downloads_html_articles(tmp_path, manifest_identifiers):
         cache_root=tmp_path / "cache",
         data_root=tmp_path / "data",
         ace_cache_root=tmp_path / "ace_cache",
+        ace_max_workers=1,
     )
 
     extractor = ACEExtractor(settings=settings, download_mode="browser")

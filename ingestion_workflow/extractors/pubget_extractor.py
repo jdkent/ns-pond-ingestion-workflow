@@ -27,6 +27,8 @@ from ingestion_workflow.models import (
 class PubgetExtractor(BaseExtractor):
     """Extractor that uses Pubget for article and table downloads."""
 
+    _SUPPORTED_IDS = {"pmcid"}
+
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or load_settings()
 
