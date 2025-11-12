@@ -64,6 +64,60 @@ def _ensure_successful_download(download_result: DownloadResult) -> None:
                 "ACE downloads must include an HTML file for extraction."
             )
 
+    if download_result.source is DownloadSource.PUBGET:
+        article_xml = next(
+            (
+                downloaded
+                for downloaded in download_result.files
+                if downloaded.file_type is FileType.XML
+                and downloaded.file_path.name == "article.xml"
+            ),
+            None,
+        )
+        tables_xml = next(
+            (
+                downloaded
+                for downloaded in download_result.files
+                if downloaded.file_type is FileType.XML
+                and downloaded.file_path.name == "tables.xml"
+            ),
+            None,
+        )
+        if article_xml is None or tables_xml is None:
+            raise ValueError(
+                "Pubget downloads must include article.xml and "
+                "tables/tables.xml for extraction."
+            )
+
+    if download_result.source is DownloadSource.ELSEVIER:
+        xml_file = next(
+            (
+                downloaded
+                for downloaded in download_result.files
+                if downloaded.file_type is FileType.XML
+                and downloaded.file_path.name.startswith("content.")
+            ),
+            None,
+        )
+        metadata_file = next(
+            (
+                downloaded
+                for downloaded in download_result.files
+                if downloaded.file_type is FileType.JSON
+                and downloaded.file_path.name == "metadata.json"
+            ),
+            None,
+        )
+        if xml_file is None:
+            raise ValueError(
+                "Elsevier downloads must include XML content for extraction; "
+                "PDF-only articles are not supported."
+            )
+        if metadata_file is None:
+            raise ValueError(
+                "Elsevier downloads must include metadata.json for extraction."
+            )
+
 
 def _group_by_source(
     download_results: Sequence[DownloadResult],
