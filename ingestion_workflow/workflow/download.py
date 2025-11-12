@@ -27,8 +27,8 @@ def _elsevier_factory(settings: Settings) -> BaseExtractor:
     return ElsevierExtractor(settings=settings)
 
 
-def _pubget_factory(_settings: Settings) -> BaseExtractor:
-    return PubgetExtractor()
+def _pubget_factory(settings: Settings) -> BaseExtractor:
+    return PubgetExtractor(settings=settings)
 
 
 def _ace_factory(_settings: Settings) -> BaseExtractor:
