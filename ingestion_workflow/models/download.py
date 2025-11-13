@@ -59,9 +59,7 @@ class DownloadedFile:
             file_type=FileType(str(payload["file_type"])),
             content_type=str(payload["content_type"]),
             source=DownloadSource(str(payload["source"])),
-            downloaded_at=datetime.fromisoformat(
-                str(payload["downloaded_at"])
-            ),
+            downloaded_at=datetime.fromisoformat(str(payload["downloaded_at"])),
             md5_hash=payload.get("md5_hash") or None,
         )
 

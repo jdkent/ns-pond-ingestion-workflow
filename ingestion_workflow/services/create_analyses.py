@@ -23,6 +23,7 @@ from ingestion_workflow.models.coordinate_parsing import (
     ParseAnalysesOutput,
 )
 from ingestion_workflow.utils.progress import emit_progress
+
 logger = logging.getLogger(__name__)
 
 
@@ -231,5 +232,6 @@ Raw Table Content:
             return path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             return path.read_text(encoding="utf-8", errors="ignore")
+
 
 __all__ = ["CreateAnalysesService", "sanitize_table_id"]

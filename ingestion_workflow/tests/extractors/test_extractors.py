@@ -50,13 +50,9 @@ def test_elsevier_download_records_articles(tmp_path, manifest_identifiers):
             assert result.files, "Successful downloads should persist files"
 
             metadata_file = next(
-                file
-                for file in result.files
-                if file.file_type is FileType.JSON
+                file for file in result.files if file.file_type is FileType.JSON
             )
-            metadata = json.loads(
-                metadata_file.file_path.read_text(encoding="utf-8")
-            )
+            metadata = json.loads(metadata_file.file_path.read_text(encoding="utf-8"))
 
             expected_lookup_type = "doi" if identifier.doi else "pmid"
             expected_lookup_value = identifier.doi or identifier.pmid
@@ -130,9 +126,7 @@ def test_pubget_download_persists_article_and_tables(tmp_path, monkeypatch):
         captured["download"] = (pmcids, data_dir, api_key, retmax)
         return download_dir, ExitCode.COMPLETED
 
-    def fake_extract(
-        articlesets_dir: Path, *, n_jobs: int
-    ) -> tuple[Path, ExitCode]:
+    def fake_extract(articlesets_dir: Path, *, n_jobs: int) -> tuple[Path, ExitCode]:
         captured["extract"] = (articlesets_dir, n_jobs)
         return articles_dir, ExitCode.COMPLETED
 
@@ -261,13 +255,9 @@ def test_pubget_extract_translates_tables(tmp_path):
     ]
 
     for info_path in sorted(tables_dir.glob("table_*_info.json")):
-        download_files.append(
-            _downloaded(info_path, FileType.JSON, "application/json")
-        )
+        download_files.append(_downloaded(info_path, FileType.JSON, "application/json"))
     for csv_path in sorted(tables_dir.glob("table_*.csv")):
-        download_files.append(
-            _downloaded(csv_path, FileType.CSV, "text/csv")
-        )
+        download_files.append(_downloaded(csv_path, FileType.CSV, "text/csv"))
 
     download_result = DownloadResult(
         identifier=identifier,
@@ -311,10 +301,7 @@ def test_pubget_extract_translates_tables(tmp_path):
         assert table_file.exists()
         assert "<original-table" in table_file.read_text(encoding="utf-8")
 
-    coordinate_tables = {
-        table.table_id: table
-        for table in content.tables
-    }
+    coordinate_tables = {table.table_id: table for table in content.tables}
     assert coordinate_tables["tbl0015"].coordinates
 
 

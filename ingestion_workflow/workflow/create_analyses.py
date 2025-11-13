@@ -156,9 +156,7 @@ def run_create_analyses(
                 continue
             exporter.export(bundle, per_bundle)
 
-    total_success_tables = sum(
-        len(entries) for entries in bundle_results.values()
-    )
+    total_success_tables = sum(len(entries) for entries in bundle_results.values())
     total_target_tables = cached_tables + pending_tables
     if total_target_tables:
         logger.info(

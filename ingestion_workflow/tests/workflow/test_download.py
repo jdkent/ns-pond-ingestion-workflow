@@ -30,9 +30,7 @@ class _FakeElsevierExtractor(BaseExtractor):
         results: list[DownloadResult] = []
         for identifier in identifiers.identifiers:
             if identifier.hash_id in self._success_targets:
-                payload_path = (
-                    self._success_dir / f"{identifier.hash_id}_content.txt"
-                )
+                payload_path = self._success_dir / f"{identifier.hash_id}_content.txt"
                 payload_path.parent.mkdir(parents=True, exist_ok=True)
                 payload_path.write_text("payload", encoding="utf-8")
                 results.append(

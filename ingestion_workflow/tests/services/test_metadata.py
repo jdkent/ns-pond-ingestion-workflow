@@ -40,7 +40,7 @@ class TestMetadataService:
     def test_init(self, test_settings):
         """Test MetadataService initialization."""
         service = MetadataService(test_settings)
-        
+
         assert service.settings == test_settings
         assert service._s2_client is not None
         assert service._pubmed_client is not None
@@ -55,12 +55,12 @@ class TestMetadataService:
             pubmed_email=None,  # No PubMed email
         )
         service = MetadataService(settings)
-        
+
         # S2 client should be initialized
         assert service._s2_client is not None
         # PubMed client might still be None if no email
         # (depends on env vars, so we just check it exists as attribute)
-        assert hasattr(service, '_pubmed_client')
+        assert hasattr(service, "_pubmed_client")
 
     def test_enrich_metadata_empty_list(self, metadata_service):
         """Test metadata enrichment with empty list."""
@@ -76,20 +76,20 @@ class TestMetadataService:
             identifier=identifier,
             has_coordinates=True,
         )
-        
+
         mock_metadata = ArticleMetadata(
             title="Test Article",
             authors=[Author(name="Test Author")],
             publication_year=2023,
         )
-        
+
         with patch.object(
             metadata_service._s2_client,
             "get_metadata",
             return_value={identifier.hash_id: mock_metadata},
         ):
             result = metadata_service.enrich_metadata([extracted])
-        
+
         assert extracted.hash_id in result
         assert result[extracted.hash_id].title == "Test Article"
 
@@ -102,23 +102,26 @@ class TestMetadataService:
             identifier=identifier,
             has_coordinates=True,
         )
-        
+
         mock_metadata = ArticleMetadata(
             title="PubMed Article",
             authors=[Author(name="PM Author")],
         )
-        
-        with patch.object(
-            metadata_service,
-            "_get_semantic_scholar_metadata_cached",
-            return_value={},
-        ), patch.object(
-            metadata_service,
-            "_get_pubmed_metadata_cached",
-            return_value={identifier.hash_id: mock_metadata},
+
+        with (
+            patch.object(
+                metadata_service,
+                "_get_semantic_scholar_metadata_cached",
+                return_value={},
+            ),
+            patch.object(
+                metadata_service,
+                "_get_pubmed_metadata_cached",
+                return_value={identifier.hash_id: mock_metadata},
+            ),
         ):
             result = metadata_service.enrich_metadata([extracted])
-        
+
         assert extracted.hash_id in result
         assert result[extracted.hash_id].title == "PubMed Article"
 
@@ -126,14 +129,10 @@ class TestMetadataService:
         """Test fallback metadata extraction from Elsevier files."""
         # Create mock metadata.json in the expected location
         identifier = Identifier(doi="10.1000/test")
-        digest = hashlib.sha256(
-            identifier.hash_id.encode("utf-8")
-        ).hexdigest()[:32]
-        cache_dir = (
-            metadata_service.settings.cache_root / "elsevier" / digest
-        )
+        digest = hashlib.sha256(identifier.hash_id.encode("utf-8")).hexdigest()[:32]
+        cache_dir = metadata_service.settings.cache_root / "elsevier" / digest
         cache_dir.mkdir(parents=True, exist_ok=True)
-        
+
         metadata_json = cache_dir / "metadata.json"
         metadata_data = {
             "title": "Elsevier Test Article",
@@ -143,10 +142,10 @@ class TestMetadataService:
             "publicationName": "Elsevier Journal",
             "coverDate": "2023-01-15",
         }
-        
+
         with open(metadata_json, "w") as f:
             json.dump(metadata_data, f)
-        
+
         extracted = ExtractedContent(
             hash_id="test_elsevier",
             source=DownloadSource.ELSEVIER,
@@ -154,9 +153,9 @@ class TestMetadataService:
             has_coordinates=False,
             full_text_path=cache_dir / "article.pdf",
         )
-        
+
         metadata = metadata_service._get_elsevier_fallback(extracted)
-        
+
         assert metadata is not None
         assert metadata.title == "Elsevier Test Article"
         assert len(metadata.authors) == 1
@@ -175,7 +174,7 @@ class TestMetadataService:
             / f"pmcid_{pmcid_suffix}"
         )
         cache_dir.mkdir(parents=True, exist_ok=True)
-        
+
         article_xml = cache_dir / "article.xml"
         xml_content = """<?xml version="1.0"?>
 <article>
@@ -204,10 +203,10 @@ class TestMetadataService:
     </front>
 </article>
 """
-        
+
         with open(article_xml, "w") as f:
             f.write(xml_content)
-        
+
         extracted = ExtractedContent(
             hash_id="test_pubget",
             source=DownloadSource.PUBGET,
@@ -215,9 +214,9 @@ class TestMetadataService:
             has_coordinates=False,
             full_text_path=cache_dir / "article.pdf",
         )
-        
+
         metadata = metadata_service._get_pubget_fallback(extracted)
-        
+
         assert metadata is not None
         assert metadata.title == "Pubget Test"
         assert len(metadata.authors) == 1
@@ -238,11 +237,7 @@ class TestMetadataIntegration:
             pytest.skip("SEMANTIC_SCHOLAR_API_KEY not configured")
 
         identifier = next(
-            (
-                ident
-                for ident in manifest_identifiers.identifiers
-                if ident.doi
-            ),
+            (ident for ident in manifest_identifiers.identifiers if ident.doi),
             None,
         )
         if identifier is None:
@@ -256,16 +251,16 @@ class TestMetadataIntegration:
             }
         )
         service = MetadataService(settings)
-        
+
         extracted = ExtractedContent(
             hash_id=identifier.hash_id,
             source=DownloadSource.PUBGET,
             identifier=identifier,
             has_coordinates=True,
         )
-        
+
         result = service.enrich_metadata([extracted])
-        
+
         assert extracted.hash_id in result
         assert result[extracted.hash_id].title is not None
 
@@ -276,22 +271,13 @@ class TestMetadataIntegration:
         manifest_identifiers,
     ):
         """Test with real PubMed API (VCR cassette)."""
-        pubmed_email = (
-            os.getenv("PUBMED_EMAIL")
-            or os.getenv("EMAIL")
-        )
+        pubmed_email = os.getenv("PUBMED_EMAIL") or os.getenv("EMAIL")
         if not pubmed_email:
             pytest.skip("PUBMED_EMAIL/EMAIL environment variable not set")
-        pubmed_api_key = (
-            os.getenv("PUBMED_API_KEY")
-        )
+        pubmed_api_key = os.getenv("PUBMED_API_KEY")
 
         identifier = next(
-            (
-                ident
-                for ident in manifest_identifiers.identifiers
-                if ident.pmid
-            ),
+            (ident for ident in manifest_identifiers.identifiers if ident.pmid),
             None,
         )
         if identifier is None:
@@ -305,14 +291,14 @@ class TestMetadataIntegration:
             }
         )
         service = MetadataService(settings)
-        
+
         extracted = ExtractedContent(
             hash_id=identifier.hash_id,
             source=DownloadSource.PUBGET,
             identifier=identifier,
             has_coordinates=True,
         )
-        
+
         # Mock S2 to force PubMed fallback
         with patch.object(
             service,
@@ -320,8 +306,6 @@ class TestMetadataIntegration:
             return_value={},
         ):
             result = service.enrich_metadata([extracted])
-        
+
         assert extracted.hash_id in result
         assert result[extracted.hash_id].title is not None
-
-

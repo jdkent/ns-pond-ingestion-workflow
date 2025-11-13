@@ -172,9 +172,7 @@ def test_ace_extract_translates_tables(tmp_path, monkeypatch):
     result = extraction_results[0]
     assert result.error_message is None
     assert result.full_text_path is not None
-    assert result.full_text_path.read_text(encoding="utf-8") == (
-        "Full article text"
-    )
+    assert result.full_text_path.read_text(encoding="utf-8") == ("Full article text")
     assert result.has_coordinates is True
     assert len(result.tables) == 1
 

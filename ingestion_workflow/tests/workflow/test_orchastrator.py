@@ -79,14 +79,13 @@ def test_run_pipeline_full_sequence(monkeypatch, tmp_path):
     _install_stub_module(
         monkeypatch,
         "ingestion_workflow.workflow.gather",
-        gather_identifiers=lambda settings, manifest=None: calls.append("gather") or identifiers,
+        gather_identifiers=lambda settings, manifest=None: calls.append("gather")
+        or identifiers,
     )
     _install_stub_module(
         monkeypatch,
         "ingestion_workflow.workflow.download",
-        run_downloads=lambda ids, settings=None, metrics=None: calls.append(
-            "download"
-        )
+        run_downloads=lambda ids, settings=None, metrics=None: calls.append("download")
         or download_results,
     )
     _install_stub_module(
@@ -228,9 +227,7 @@ def test_gather_stage_combines_manifest(monkeypatch, tmp_path):
     manifest = tmp_path / "manifest.jsonl"
     Identifiers([manifest_identifier]).save(manifest)
 
-    returned_identifiers = Identifiers(
-        [Identifier(pmid="654"), manifest_identifier]
-    )
+    returned_identifiers = Identifiers([Identifier(pmid="654"), manifest_identifier])
     seen: Dict[str, object] = {}
 
     def _fake_gather_identifiers(*, settings=None, manifest=None, **_kwargs):

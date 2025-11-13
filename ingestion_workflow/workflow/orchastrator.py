@@ -135,9 +135,7 @@ def _run_extract_stage(settings: Settings, state: PipelineState) -> None:
     state.stage_metrics["extract"] = extract_metrics
 
 
-def _run_create_analyses_stage(
-    settings: Settings, state: PipelineState
-) -> None:
+def _run_create_analyses_stage(settings: Settings, state: PipelineState) -> None:
     if settings.dry_run:
         logger.info("Dry-run enabled: create_analyses stage skipped.")
         return
@@ -171,9 +169,7 @@ def _normalize_stages(stages: Sequence[str] | None) -> List[str]:
     )
     invalid = [stage for stage in requested if stage not in CANONICAL_STAGES]
     if invalid:
-        raise ValueError(
-            f"Unknown stages requested: {', '.join(sorted(set(invalid)))}"
-        )
+        raise ValueError(f"Unknown stages requested: {', '.join(sorted(set(invalid)))}")
     requested_set = set(requested) or set(CANONICAL_STAGES)
     return [stage for stage in CANONICAL_STAGES if stage in requested_set]
 
@@ -238,8 +234,7 @@ def _ensure_bundles(settings: Settings, state: PipelineState) -> None:
     )
     if not hydrated:
         raise ValueError(
-            "No cached extraction bundles were found. "
-            "Re-run the extract stage."
+            "No cached extraction bundles were found. " "Re-run the extract stage."
         )
     state.bundles = hydrated
 
@@ -321,9 +316,7 @@ def _load_identifiers_from_manifest(settings: Settings) -> Identifiers:
     if not manifest_path.is_absolute():
         manifest_path = settings.data_root / manifest_path
     if not manifest_path.exists():
-        raise FileNotFoundError(
-            f"Manifest file not found: {manifest_path}"
-        )
+        raise FileNotFoundError(f"Manifest file not found: {manifest_path}")
     identifiers = Identifiers.load(manifest_path)
     logger.info(
         "Loaded %d identifiers from manifest %s",
@@ -360,9 +353,7 @@ def _hydrate_bundles_from_cache(
     bundles: Dict[str, ArticleExtractionBundle] = {}
     downloads_by_source: Dict[str, List[DownloadResult]] = {}
     for download in downloads:
-        downloads_by_source.setdefault(download.source.value, []).append(
-            download
-        )
+        downloads_by_source.setdefault(download.source.value, []).append(download)
 
     for source_name, download_list in downloads_by_source.items():
         index = cache.load_extractor_index(settings, source_name)
@@ -384,9 +375,7 @@ def _build_placeholder_metadata(identifier: Identifier) -> ArticleMetadata:
     for candidate in (identifier.doi, identifier.pmid, identifier.pmcid):
         if candidate:
             return ArticleMetadata(title=str(candidate))
-    label = " / ".join(
-        part for part in identifier.hash_id.split("|") if part
-    )
+    label = " / ".join(part for part in identifier.hash_id.split("|") if part)
     if label:
         return ArticleMetadata(title=label)
     return ArticleMetadata(title=identifier.hash_id or "Unknown Identifier")

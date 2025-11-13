@@ -47,8 +47,7 @@ def _ensure_successful_download(download_result: DownloadResult) -> None:
 
     if not download_result.files:
         raise ValueError(
-            "Successful downloads must include persisted files for "
-            "extraction."
+            "Successful downloads must include persisted files for " "extraction."
         )
 
     missing_paths = [
@@ -73,9 +72,7 @@ def _ensure_successful_download(download_result: DownloadResult) -> None:
             None,
         )
         if html_file is None:
-            raise ValueError(
-                "ACE downloads must include an HTML file for extraction."
-            )
+            raise ValueError("ACE downloads must include an HTML file for extraction.")
 
     if download_result.source is DownloadSource.PUBGET:
         article_xml = next(
@@ -138,9 +135,7 @@ def _group_by_source(
     grouped: Dict[DownloadSource, List[Tuple[int, DownloadResult]]] = {}
     for index, download_result in enumerate(download_results):
         _ensure_successful_download(download_result)
-        grouped.setdefault(download_result.source, []).append(
-            (index, download_result)
-        )
+        grouped.setdefault(download_result.source, []).append((index, download_result))
     return grouped
 
 
@@ -162,7 +157,7 @@ def run_extraction(
 ) -> List[ArticleExtractionBundle]:
     """
     Execute extraction for previously downloaded articles.
-    
+
     Returns
     -------
     list
@@ -176,9 +171,7 @@ def run_extraction(
     resolved_settings = settings or load_settings()
 
     grouped = _group_by_source(download_results)
-    ordered_results: List[ExtractionResult | None] = [
-        None
-    ] * len(download_results)
+    ordered_results: List[ExtractionResult | None] = [None] * len(download_results)
 
     processed_count = 0
     for source, entries in grouped.items():
@@ -219,9 +212,7 @@ def run_extraction(
             missing_index += 1
 
         if missing_index != len(missing_results):
-            raise ValueError(
-                "Extraction cache bookkeeping mismatch detected."
-            )
+            raise ValueError("Extraction cache bookkeeping mismatch detected.")
 
         if not pending_entries:
             logger.info(
@@ -240,10 +231,7 @@ def run_extraction(
             extra=console_kwargs(),
         )
 
-        pending_subset = [
-            download_result
-            for _, download_result in pending_entries
-        ]
+        pending_subset = [download_result for _, download_result in pending_entries]
 
         progress = _create_progress_bar(
             resolved_settings,
@@ -267,9 +255,7 @@ def run_extraction(
                 progress.close()
 
         if len(extracted) != len(pending_subset):
-            raise ValueError(
-                "Extractor returned a result set with mismatched length."
-            )
+            raise ValueError("Extractor returned a result set with mismatched length.")
 
         for (index, _), extraction_result in zip(pending_entries, extracted):
             ordered_results[index] = extraction_result
@@ -292,16 +278,12 @@ def run_extraction(
     final_results: List[ExtractionResult] = []
     for index, candidate in enumerate(ordered_results):
         if candidate is None:
-            raise ValueError(
-                f"Extraction result missing for download index {index}."
-            )
+            raise ValueError(f"Extraction result missing for download index {index}.")
         final_results.append(candidate)
 
     # Enrich metadata for articles with coordinates
     metadata_dict: Dict[str, ArticleMetadata] = {}
-    eligible_for_metadata = [
-        result for result in final_results if result.identifier
-    ]
+    eligible_for_metadata = [result for result in final_results if result.identifier]
 
     if eligible_for_metadata:
         logger.info(
@@ -310,9 +292,7 @@ def run_extraction(
         )
         try:
             metadata_service = MetadataService(resolved_settings)
-            metadata_dict = metadata_service.enrich_metadata(
-                eligible_for_metadata
-            )
+            metadata_dict = metadata_service.enrich_metadata(eligible_for_metadata)
             logger.info(
                 "Successfully enriched metadata for %d articles",
                 len(metadata_dict),

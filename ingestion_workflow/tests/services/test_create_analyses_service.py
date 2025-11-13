@@ -42,9 +42,7 @@ def _make_bundle(table_path: Path) -> ArticleExtractionBundle:
         raw_content_path=table_path,
         caption="Sample caption",
         footer="Sample footer",
-        coordinates=[
-            Coordinate(x=0.0, y=0.0, z=0.0, space=CoordinateSpace.MNI)
-        ],
+        coordinates=[Coordinate(x=0.0, y=0.0, z=0.0, space=CoordinateSpace.MNI)],
     )
     content = ExtractedContent(
         hash_id="article-1",

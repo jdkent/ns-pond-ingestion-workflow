@@ -80,9 +80,7 @@ class CoordinateParsingClient(GenericLLMClient):
         try:
             return ParseAnalysesOutput(**result_dict)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "LLM output validation failed; skipping table: %s", exc
-            )
+            logger.warning("LLM output validation failed; skipping table: %s", exc)
             logger.debug("Result payload: %s", result_dict)
             return ParseAnalysesOutput(analyses=[])
 

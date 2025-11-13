@@ -68,9 +68,7 @@ class CacheEnvelope(Generic[PayloadT]):
         if hasattr(self.payload, "__dict__"):
             return dict(self.payload.__dict__)
         raise TypeError(
-            "Cache payload"
-            f" {type(self.payload)!r}"
-            " does not support serialization"
+            "Cache payload" f" {type(self.payload)!r}" " does not support serialization"
         )
 
     @classmethod
@@ -82,9 +80,7 @@ class CacheEnvelope(Generic[PayloadT]):
         decoded_payload = cls._decode_payload(payload_blob)
         cached_raw = payload.get("cached_at")
         cached_at = (
-            _decode_datetime(str(cached_raw))
-            if cached_raw
-            else datetime.utcnow()
+            _decode_datetime(str(cached_raw)) if cached_raw else datetime.utcnow()
         )
         metadata = dict(payload.get("metadata", {}))
         raw_hash_id = payload.get("hash_id")
@@ -236,9 +232,7 @@ class IdentifierCacheEntry(CacheEnvelope[IdentifierExpansion]):
     payload_cls: ClassVar[Type[IdentifierExpansion]] = IdentifierExpansion
 
     @classmethod
-    def from_expansion(
-        cls, expansion: IdentifierExpansion
-    ) -> "IdentifierCacheEntry":
+    def from_expansion(cls, expansion: IdentifierExpansion) -> "IdentifierCacheEntry":
         clone = IdentifierExpansion.from_dict(expansion.to_dict())
         hash_id = clone.seed_identifier.hash_id
         return cls(hash_id=hash_id, payload=clone)
@@ -274,9 +268,7 @@ class ExtractionResultEntry(CacheEnvelope[ExtractedContent]):
     payload_cls: ClassVar[Type[ExtractedContent]] = ExtractedContent
 
     @classmethod
-    def from_content(
-        cls, content: ExtractedContent
-    ) -> "ExtractionResultEntry":
+    def from_content(cls, content: ExtractedContent) -> "ExtractionResultEntry":
         clone = ExtractedContent.from_dict(content.to_dict())
         return cls(hash_id=clone.hash_id, payload=clone)
 
@@ -294,9 +286,7 @@ class ExtractionResultIndex(CacheIndex[ExtractionResultEntry]):
     """Index for extraction result envelopes."""
 
     entries_key: ClassVar[str] = "extractions"
-    envelope_type: ClassVar[Type[ExtractionResultEntry]] = (
-        ExtractionResultEntry
-    )
+    envelope_type: ClassVar[Type[ExtractionResultEntry]] = ExtractionResultEntry
 
     def add_extraction(self, entry: ExtractionResultEntry) -> None:
         self.add(entry)
@@ -315,9 +305,7 @@ class CreateAnalysesResultEntry(CacheEnvelope[CreateAnalysesResult]):
     payload_cls: ClassVar[Type[CreateAnalysesResult]] = CreateAnalysesResult
 
     @classmethod
-    def from_result(
-        cls, result: CreateAnalysesResult
-    ) -> "CreateAnalysesResultEntry":
+    def from_result(cls, result: CreateAnalysesResult) -> "CreateAnalysesResultEntry":
         clone = CreateAnalysesResult.from_dict(result.to_dict())
         return cls(hash_id=clone.hash_id, payload=clone)
 
@@ -339,9 +327,7 @@ class CreateAnalysesResultIndex(CacheIndex[CreateAnalysesResultEntry]):
     """Index for cached create-analyses results."""
 
     entries_key: ClassVar[str] = "create_analyses"
-    envelope_type: ClassVar[Type[CreateAnalysesResultEntry]] = (
-        CreateAnalysesResultEntry
-    )
+    envelope_type: ClassVar[Type[CreateAnalysesResultEntry]] = CreateAnalysesResultEntry
 
     def add_result(self, entry: CreateAnalysesResultEntry) -> None:
         self.add(entry)
@@ -443,4 +429,3 @@ __all__ = [
     "MetadataCache",
     "MetadataCacheIndex",
 ]
-

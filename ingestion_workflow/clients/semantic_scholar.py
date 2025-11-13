@@ -166,9 +166,7 @@ class SemanticScholarClient:
         response.raise_for_status()
         return response.json()
 
-    def get_metadata(
-        self, identifiers: List[Identifier]
-    ) -> Dict[str, ArticleMetadata]:
+    def get_metadata(self, identifiers: List[Identifier]) -> Dict[str, ArticleMetadata]:
         """
         Fetch article metadata for batch of identifiers.
 
@@ -205,7 +203,7 @@ class SemanticScholarClient:
         # Batch requests
         results: Dict[str, ArticleMetadata] = {}
         batches = [
-            request_ids[i:i + SEMANTIC_SCHOLAR_BATCH_SIZE]
+            request_ids[i : i + SEMANTIC_SCHOLAR_BATCH_SIZE]
             for i in range(0, len(request_ids), SEMANTIC_SCHOLAR_BATCH_SIZE)
         ]
 

@@ -118,9 +118,7 @@ class PubgetExtractor(BaseExtractor):
             )
 
         if download_code == ExitCode.ERROR:
-            failure_message = (
-                "Pubget reported an error while downloading PMCIDs."
-            )
+            failure_message = "Pubget reported an error while downloading PMCIDs."
             for indices in pmcid_map.values():
                 for idx in indices:
                     identifier = identifiers.identifiers[idx]
@@ -176,17 +174,14 @@ class PubgetExtractor(BaseExtractor):
         warning_messages: List[str] = []
         if download_code == ExitCode.INCOMPLETE:
             warning_messages.append(
-                "Pubget reported an incomplete download; some PMCIDs may "
-                "be missing."
+                "Pubget reported an incomplete download; some PMCIDs may " "be missing."
             )
         if extract_code == ExitCode.INCOMPLETE:
             warning_messages.append(
                 "Pubget reported incomplete article extraction; outputs may "
                 "be partial."
             )
-        combined_warning = (
-            " ".join(warning_messages) if warning_messages else None
-        )
+        combined_warning = " ".join(warning_messages) if warning_messages else None
 
         article_index = self._index_articles(articles_dir)
         for pmcid, indices in pmcid_map.items():
@@ -195,8 +190,7 @@ class PubgetExtractor(BaseExtractor):
                 identifier = identifiers.identifiers[idx]
                 if article_dir is None:
                     message = combined_warning or (
-                        "Pubget did not produce output for the requested "
-                        "PMCID."
+                        "Pubget did not produce output for the requested " "PMCID."
                     )
                     results_by_index[idx] = self._build_failure(
                         identifier,
@@ -236,9 +230,9 @@ class PubgetExtractor(BaseExtractor):
         extraction_root = self._extraction_root
         extraction_root.mkdir(parents=True, exist_ok=True)
 
-        ordered_results: list[Optional[ExtractionResult]] = [
-            None
-        ] * len(download_results)
+        ordered_results: list[Optional[ExtractionResult]] = [None] * len(
+            download_results
+        )
 
         worker_count = max(1, self.settings.max_workers)
 
@@ -370,17 +364,13 @@ class PubgetExtractor(BaseExtractor):
                 )
                 seen_paths.add(info_path)
                 try:
-                    table_info = json.loads(
-                        info_path.read_text(encoding="utf-8")
-                    )
+                    table_info = json.loads(info_path.read_text(encoding="utf-8"))
                 except json.JSONDecodeError:
                     missing.append(f"Invalid JSON: {info_path.name}")
                     continue
                 data_name = table_info.get("table_data_file")
                 if not data_name:
-                    missing.append(
-                        f"Missing table_data_file in {info_path.name}"
-                    )
+                    missing.append(f"Missing table_data_file in {info_path.name}")
                     continue
                 data_path = info_path.with_name(str(data_name))
                 if not data_path.is_file():
@@ -441,9 +431,7 @@ class PubgetExtractor(BaseExtractor):
             md5_hash=md5_hash,
         )
 
-    def _build_failure(
-        self, identifier: Identifier, message: str
-    ) -> DownloadResult:
+    def _build_failure(self, identifier: Identifier, message: str) -> DownloadResult:
         return DownloadResult(
             identifier=identifier,
             source=DownloadSource.PUBGET,
@@ -545,18 +533,14 @@ def _extract_pubget_article(
     full_text_path.write_text(full_text, encoding="utf-8")
 
     article_text = " ".join(article_tree.xpath(".//text()"))
-    article_space = _coordinate_space_from_guess(
-        _neurosynth_guess_space(article_text)
-    )
+    article_space = _coordinate_space_from_guess(_neurosynth_guess_space(article_text))
 
     tables_tree = etree.parse(str(tables_file.file_path))
     element_by_id, element_by_label = _build_table_lookup(tables_tree)
 
     info_files = get_table_info_files_from_article_dir(article_input_dir)
     if not info_files:
-        message = (
-            "Pubget tables metadata not found; returning empty extraction."
-        )
+        message = "Pubget tables metadata not found; returning empty extraction."
         logger.info("%s: %s", hash_id, message)
         return ExtractedContent(
             hash_id=hash_id,
@@ -659,9 +643,7 @@ def _extract_pubget_article(
             "coordinates_path": str(coordinate_csv_path),
         }
 
-        table_number = _parse_table_number(
-            table_info.get("table_label")
-        )
+        table_number = _parse_table_number(table_info.get("table_label"))
         caption = table_info.get("table_caption") or ""
         footer = table_info.get("table_foot") or ""
         metadata = {
@@ -704,9 +686,7 @@ def _extract_pubget_article(
 
     error_message = None
     if failure_reasons:
-        error_message = "Pubget skipped tables: " + " | ".join(
-            failure_reasons
-        )
+        error_message = "Pubget skipped tables: " + " | ".join(failure_reasons)
 
     has_coordinates = any(table.coordinates for table in extracted_tables)
 

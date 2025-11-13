@@ -191,8 +191,6 @@ def _build_failure_extraction(
     )
 
 
-
-
 def _translate_ace_table(
     table: Any,
     article: Any,
@@ -362,9 +360,7 @@ class ACEExtractor(BaseExtractor):
                 emit_progress(progress_hook)
             return results
 
-        ordered_results: list[Optional[DownloadResult]] = [
-            None
-        ] * len(identifiers_list)
+        ordered_results: list[Optional[DownloadResult]] = [None] * len(identifiers_list)
 
         thread_local = threading.local()
 
@@ -429,9 +425,9 @@ class ACEExtractor(BaseExtractor):
                     "extraction."
                 )
 
-        ordered_results: list[Optional[ExtractionResult]] = [
-            None
-        ] * len(download_results)
+        ordered_results: list[Optional[ExtractionResult]] = [None] * len(
+            download_results
+        )
 
         worker_count = max(1, self.settings.max_workers)
 
@@ -594,10 +590,7 @@ class ACEExtractor(BaseExtractor):
         )
 
     def _resolve_cache_root(self) -> Path:
-        base = (
-            self.settings.ace_cache_root
-            or self.settings.get_cache_dir("ace")
-        )
+        base = self.settings.ace_cache_root or self.settings.get_cache_dir("ace")
         base.mkdir(parents=True, exist_ok=True)
         (base / "html").mkdir(parents=True, exist_ok=True)
         return base

@@ -49,9 +49,7 @@ EXTRACTOR_FACTORIES: Dict[DownloadSource, ExtractorFactory] = {
 }
 
 
-def _resolve_extractor(
-    source: DownloadSource, settings: Settings
-) -> BaseExtractor:
+def _resolve_extractor(source: DownloadSource, settings: Settings) -> BaseExtractor:
     try:
         factory = EXTRACTOR_FACTORIES[source]
     except KeyError as exc:  # pragma: no cover - defensive guard
@@ -61,11 +59,7 @@ def _resolve_extractor(
 
 
 def _successful_hashes(results: Sequence[DownloadResult]) -> set[str]:
-    return {
-        result.identifier.hash_id
-        for result in results
-        if result.success
-    }
+    return {result.identifier.hash_id for result in results if result.success}
 
 
 def _identifiers_from_hashes(
@@ -73,9 +67,7 @@ def _identifiers_from_hashes(
     success_hashes: set[str],
 ) -> List[Identifier]:
     return [
-        identifier
-        for identifier in pending
-        if identifier.hash_id not in success_hashes
+        identifier for identifier in pending if identifier.hash_id not in success_hashes
     ]
 
 
@@ -122,9 +114,7 @@ def run_downloads(
         source = DownloadSource(source_name)
         extractor = _resolve_extractor(source, settings)
 
-        supported, unsupported = _partition_supported_identifiers(
-            extractor, remaining
-        )
+        supported, unsupported = _partition_supported_identifiers(extractor, remaining)
         if not supported:
             remaining = list(unsupported)
             continue
@@ -215,9 +205,7 @@ def run_downloads(
             )
 
         successful_hashes.update(
-            result.identifier.hash_id
-            for result in successes
-            if result.identifier
+            result.identifier.hash_id for result in successes if result.identifier
         )
 
         success_hashes = _successful_hashes(successes)
@@ -259,7 +247,6 @@ def _create_progress_bar(
         leave=False,
         unit="article",
     )
-
 
 
 __all__ = ["run_downloads"]

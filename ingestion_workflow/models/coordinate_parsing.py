@@ -46,9 +46,7 @@ class CoordinatePoint(BaseModel):
     )
     values: Optional[List[PointsValue]] = Field(
         None,
-        description=(
-            "Optional list of statistical values associated with the point"
-        ),
+        description=("Optional list of statistical values associated with the point"),
     )
 
     @field_validator("coordinates")
@@ -58,14 +56,10 @@ class CoordinatePoint(BaseModel):
         if not isinstance(value, list):
             raise ValueError("Coordinates must be a list")
         if len(value) != 3:
-            raise ValueError(
-                "Coordinates must contain exactly 3 values [x, y, z]"
-            )
+            raise ValueError("Coordinates must contain exactly 3 values [x, y, z]")
         for index, coord in enumerate(value):
             if not isinstance(coord, (int, float)):
-                raise ValueError(
-                    f"Coordinate at index {index} must be a number"
-                )
+                raise ValueError(f"Coordinate at index {index} must be a number")
         return [float(coord) for coord in value]
 
 

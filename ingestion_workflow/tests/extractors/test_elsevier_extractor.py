@@ -46,9 +46,7 @@ def test_elsevier_download_mixed_success(monkeypatch, tmp_path):
         assert len(records) == 3
         articles = [
             _make_fake_article(pmid="123456", identifier_type="pmid"),
-            _make_fake_article(
-                doi="10.1234/success", identifier_type="doi"
-            ),
+            _make_fake_article(doi="10.1234/success", identifier_type="doi"),
         ]
         if progress_hook:
             for _ in articles:

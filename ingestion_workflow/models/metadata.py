@@ -96,36 +96,30 @@ class ArticleMetadata:
         """
         # Merge authors: prefer the list with more authors
         merged_authors = self.authors if self.authors else other.authors
-        if (
-            self.authors
-            and other.authors
-            and len(other.authors) > len(self.authors)
-        ):
+        if self.authors and other.authors and len(other.authors) > len(self.authors):
             merged_authors = other.authors
-        
+
         # Merge abstract: prefer the longer one
         merged_abstract = self.abstract
         if not merged_abstract or (
             other.abstract and len(other.abstract) > len(merged_abstract)
         ):
             merged_abstract = other.abstract
-        
+
         # Merge keywords: combine unique keywords
         merged_keywords = list(self.keywords)
         for kw in other.keywords:
             if kw not in merged_keywords:
                 merged_keywords.append(kw)
-        
+
         # Merge raw_metadata
         merged_raw = {**other.raw_metadata, **self.raw_metadata}
-        
+
         # Determine open_access value
         merged_open_access = (
-            self.open_access
-            if self.open_access is not None
-            else other.open_access
+            self.open_access if self.open_access is not None else other.open_access
         )
-        
+
         return ArticleMetadata(
             title=self.title or other.title,
             authors=merged_authors,
@@ -208,15 +202,15 @@ def merge_metadata_from_sources(
     """
     if not metadata_list:
         raise ValueError("Cannot merge empty metadata list")
-    
+
     if len(metadata_list) == 1:
         return metadata_list[0]
-    
+
     # Start with the first metadata item
     merged = metadata_list[0]
-    
+
     # Merge each subsequent item
     for metadata in metadata_list[1:]:
         merged = merged.merge_from(metadata)
-    
+
     return merged

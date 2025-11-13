@@ -79,9 +79,7 @@ class Identifier(MutableMapping[str, Optional[str]]):
                 k: _normalize_identifier(v) for k, v in self.other_ids.items()
             }
             self.other_ids = {
-                key: value
-                for key, value in normalized.items()
-                if value is not None
+                key: value for key, value in normalized.items() if value is not None
             }
             if not self.other_ids:
                 self.other_ids = None
@@ -139,9 +137,7 @@ class Identifier(MutableMapping[str, Optional[str]]):
                 yield key
 
     def __len__(self) -> int:
-        count = sum(
-            1 for key in self._PRIMARY_KEYS if getattr(self, key) is not None
-        )
+        count = sum(1 for key in self._PRIMARY_KEYS if getattr(self, key) is not None)
         if self.other_ids:
             count += len(self.other_ids)
         return count
@@ -208,9 +204,7 @@ class Identifiers:
         for identifier in self.identifiers:
             self._add_to_indices(identifier)
 
-    def lookup(
-        self, value: str, key: Optional[str] = None
-    ) -> Optional[Identifier]:
+    def lookup(self, value: str, key: Optional[str] = None) -> Optional[Identifier]:
         """Return a matching identifier in constant time."""
         if key is not None and key not in {
             "pmid",
@@ -219,8 +213,7 @@ class Identifiers:
             "neurostore",
         }:
             raise ValueError(
-                "Lookup key must be one of 'pmid', 'pmcid', 'doi', or "
-                "'neurostore'."
+                "Lookup key must be one of 'pmid', 'pmcid', 'doi', or " "'neurostore'."
             )
 
         target_key = key
@@ -228,9 +221,7 @@ class Identifiers:
             target_key = next(iter(self._index_keys))
 
         if target_key is None:
-            raise ValueError(
-                "No index configured. Set indices first or provide key."
-            )
+            raise ValueError("No index configured. Set indices first or provide key.")
 
         if target_key not in self._index_keys:
             new_keys = set(self._index_keys)
@@ -242,9 +233,7 @@ class Identifiers:
             return None
         return self._indices[target_key].get(normalized)
 
-    def _normalize_for_key(
-        self, key: str, value: Optional[str]
-    ) -> Optional[str]:
+    def _normalize_for_key(self, key: str, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
         value_str = str(value)
@@ -349,9 +338,7 @@ class Identifiers:
         """Return the number of identifiers."""
         return len(self.identifiers)
 
-    def __getitem__(
-        self, index: int | slice | str
-    ) -> Identifier | list[Identifier]:
+    def __getitem__(self, index: int | slice | str) -> Identifier | list[Identifier]:
         """Get identifier(s) by index, slice, or indexed id."""
         if isinstance(index, str):
             result = self.lookup(index)
@@ -469,17 +456,11 @@ class IdentifierExpansion:
         }
 
     @classmethod
-    def from_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> "IdentifierExpansion":
+    def from_dict(cls, payload: Mapping[str, Any]) -> "IdentifierExpansion":
         seed_payload = payload.get("seed_identifier", {})
-        seed_identifier = Identifier(
-            **seed_payload
-        )  # type: ignore[arg-type]
+        seed_identifier = Identifier(**seed_payload)  # type: ignore[arg-type]
         identifiers_payload = payload.get("identifiers", [])
-        identifier_list = [
-            Identifier(**item) for item in identifiers_payload
-        ]
+        identifier_list = [Identifier(**item) for item in identifiers_payload]
         return cls(
             seed_identifier=seed_identifier,
             identifiers=Identifiers(identifier_list),

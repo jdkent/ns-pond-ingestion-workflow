@@ -40,9 +40,7 @@ def stub_llm_init(monkeypatch):
 def _bundle(tmp_path: Path, *, has_coordinates: bool = True) -> ArticleExtractionBundle:
     table_path = tmp_path / "table.html"
     table_path.write_text("<table><tr><td>1</td></tr></table>", encoding="utf-8")
-    coordinates = (
-        [Coordinate(x=0.0, y=0.0, z=0.0)] if has_coordinates else []
-    )
+    coordinates = [Coordinate(x=0.0, y=0.0, z=0.0)] if has_coordinates else []
     table = ExtractedTable(
         table_id="Table 1",
         raw_content_path=table_path,

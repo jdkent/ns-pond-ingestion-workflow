@@ -169,16 +169,12 @@ class Analysis:
             name=str(payload["name"]),
             description=payload.get("description"),
             coordinates=[
-                Coordinate.from_dict(item)
-                for item in payload.get("coordinates", [])
+                Coordinate.from_dict(item) for item in payload.get("coordinates", [])
             ],
             contrasts=[
-                Contrast.from_dict(item)
-                for item in payload.get("contrasts", [])
+                Contrast.from_dict(item) for item in payload.get("contrasts", [])
             ],
-            images=[
-                Image.from_dict(item) for item in payload.get("images", [])
-            ],
+            images=[Image.from_dict(item) for item in payload.get("images", [])],
             table_id=payload.get("table_id"),
             table_number=payload.get("table_number"),
             table_caption=str(payload.get("table_caption", "")),
@@ -210,20 +206,14 @@ class AnalysisCollection:
         }
 
     @classmethod
-    def from_dict(
-        cls, payload: Mapping[str, Any]
-    ) -> "AnalysisCollection":
+    def from_dict(cls, payload: Mapping[str, Any]) -> "AnalysisCollection":
         identifier_payload = payload.get("identifier")
         identifier = (
-            Identifier(**identifier_payload)
-            if identifier_payload is not None
-            else None
+            Identifier(**identifier_payload) if identifier_payload is not None else None
         )
         return cls(
             hash_id=str(payload["hash_id"]),
-            analyses=[
-                Analysis.from_dict(item) for item in payload.get("analyses", [])
-            ],
+            analyses=[Analysis.from_dict(item) for item in payload.get("analyses", [])],
             coordinate_space=CoordinateSpace(
                 payload.get("coordinate_space", CoordinateSpace.MNI.value)
             ),

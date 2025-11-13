@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 class MetadataService:
     """
     Service for enriching ExtractedContent with article metadata.
-    
+
     Coordinates metadata fetching from multiple sources:
     1. Semantic Scholar (if API key available)
     2. PubMed (if email configured)
@@ -48,10 +48,8 @@ class MetadataService:
 
         # Initialize clients if credentials available
         if settings.semantic_scholar_api_key:
-            self._s2_client = SemanticScholarClient(
-                settings.semantic_scholar_api_key
-            )
-        
+            self._s2_client = SemanticScholarClient(settings.semantic_scholar_api_key)
+
         if settings.pubmed_email:
             self._pubmed_client = PubMedClient(
                 email=settings.pubmed_email,
@@ -77,13 +75,9 @@ class MetadataService:
         if not extracted_contents:
             return {}
 
-        identified_items = [
-            item for item in extracted_contents if item.identifier
-        ]
+        identified_items = [item for item in extracted_contents if item.identifier]
 
-        id_to_content = {
-            item.identifier.hash_id: item for item in identified_items
-        }
+        id_to_content = {item.identifier.hash_id: item for item in identified_items}
 
         results: Dict[str, ArticleMetadata] = {}
 
@@ -126,9 +120,9 @@ class MetadataService:
                         continue
                     article_hash = content.hash_id
                     if article_hash in results:
-                        results[article_hash] = results[
-                            article_hash
-                        ].merge_from(pubmed_meta)
+                        results[article_hash] = results[article_hash].merge_from(
+                            pubmed_meta
+                        )
                     else:
                         results[article_hash] = pubmed_meta
                 logger.info(
@@ -150,9 +144,9 @@ class MetadataService:
                     fallback_meta = self._get_fallback_metadata(item)
                     if fallback_meta:
                         if item.hash_id in results:
-                            results[item.hash_id] = results[
-                                item.hash_id
-                            ].merge_from(fallback_meta)
+                            results[item.hash_id] = results[item.hash_id].merge_from(
+                                fallback_meta
+                            )
                         else:
                             results[item.hash_id] = fallback_meta
                 except Exception as exc:
@@ -181,9 +175,7 @@ class MetadataService:
             if cache_file.exists():
                 try:
                     data = json.loads(cache_file.read_text(encoding="utf-8"))
-                    results[identifier.hash_id] = ArticleMetadata.from_dict(
-                        data
-                    )
+                    results[identifier.hash_id] = ArticleMetadata.from_dict(data)
                 except Exception as exc:
                     logger.warning(
                         "Failed to load cached S2 metadata for %s: %s",
@@ -214,9 +206,7 @@ class MetadataService:
                         )
                     results[hash_id] = metadata
             except Exception as exc:
-                logger.error(
-                    "Semantic Scholar metadata request failed: %s", exc
-                )
+                logger.error("Semantic Scholar metadata request failed: %s", exc)
 
         return results
 
@@ -236,9 +226,7 @@ class MetadataService:
             if cache_file.exists():
                 try:
                     data = json.loads(cache_file.read_text(encoding="utf-8"))
-                    results[identifier.hash_id] = ArticleMetadata.from_dict(
-                        data
-                    )
+                    results[identifier.hash_id] = ArticleMetadata.from_dict(data)
                 except Exception as exc:
                     logger.warning(
                         "Failed to load cached PubMed metadata for %s: %s",
@@ -301,17 +289,15 @@ class MetadataService:
         if extracted_content.identifier:
             identifier_hash = extracted_content.identifier.hash_id.strip()
             if identifier_hash:
-                digest = hashlib.sha256(
-                    identifier_hash.encode("utf-8")
-                ).hexdigest()[:32]
+                digest = hashlib.sha256(identifier_hash.encode("utf-8")).hexdigest()[
+                    :32
+                ]
                 base_dir = (
                     self.settings.elsevier_cache_root
                     if self.settings.elsevier_cache_root is not None
                     else self.settings.cache_root / "elsevier"
                 )
-                candidate_files.append(
-                    base_dir / digest / "metadata.json"
-                )
+                candidate_files.append(base_dir / digest / "metadata.json")
 
         metadata_file = next(
             (path for path in candidate_files if path.exists()),
@@ -323,7 +309,7 @@ class MetadataService:
 
         try:
             data = json.loads(metadata_file.read_text(encoding="utf-8"))
-            
+
             # Elsevier metadata structure varies, extract what we can
             title = None
             authors: List[Author] = []
@@ -337,7 +323,7 @@ class MetadataService:
 
             if not title:
                 title = data.get("articleTitle")
-            
+
             # Year from publication date
             if "publication_date" in data:
                 try:
@@ -396,10 +382,7 @@ class MetadataService:
             candidate_files.append(article_dir.parent / "article.xml")
             candidate_files.append(article_dir / "article.xml")
 
-        if (
-            extracted_content.identifier
-            and extracted_content.identifier.pmcid
-        ):
+        if extracted_content.identifier and extracted_content.identifier.pmcid:
             pmcid = extracted_content.identifier.pmcid.strip().upper()
             if pmcid.startswith("PMC"):
                 pmcid = pmcid[3:]
@@ -408,9 +391,7 @@ class MetadataService:
                 if self.settings.pubget_cache_root is not None
                 else self.settings.cache_root / "pubget"
             )
-            candidate_files.extend(
-                base_dir.glob(f"**/pmcid_{pmcid}/article.xml")
-            )
+            candidate_files.extend(base_dir.glob(f"**/pmcid_{pmcid}/article.xml"))
 
         article_xml = next(
             (path for path in candidate_files if path.exists()),

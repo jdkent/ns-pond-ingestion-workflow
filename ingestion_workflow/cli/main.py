@@ -141,8 +141,7 @@ def create_analyses(
     )
     serializable = {
         article_hash: {
-            table_id: collection.to_dict()
-            for table_id, collection in table_map.items()
+            table_id: collection.to_dict() for table_id, collection in table_map.items()
         }
         for article_hash, table_map in results.items()
     }

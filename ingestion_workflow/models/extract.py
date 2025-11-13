@@ -51,9 +51,7 @@ class ExtractedTable:
                     "space": (
                         coord.space.value
                         if coord.space
-                        else (
-                            self.space.value if self.space else None
-                        )
+                        else (self.space.value if self.space else None)
                     ),
                 }
                 for coord in self.coordinates
@@ -65,9 +63,7 @@ class ExtractedTable:
     def from_dict(cls, payload: Mapping[str, object]) -> "ExtractedTable":
         metadata = payload.get("metadata") or {}
         space_value = payload.get("space")
-        table_space = (
-            CoordinateSpace(str(space_value)) if space_value else None
-        )
+        table_space = CoordinateSpace(str(space_value)) if space_value else None
         coordinates_payload = payload.get("coordinates", [])
         resolved_coordinates: List[Coordinate] = []
         for item in coordinates_payload:
@@ -87,9 +83,7 @@ class ExtractedTable:
             table_number=payload.get("table_number"),
             caption=str(payload.get("caption", "")),
             footer=str(payload.get("footer", "")),
-            contains_coordinates=bool(
-                payload.get("contains_coordinates", False)
-            ),
+            contains_coordinates=bool(payload.get("contains_coordinates", False)),
             metadata=dict(metadata),
             coordinates=resolved_coordinates,
             space=table_space,
@@ -113,9 +107,7 @@ class ExtractedContent:
         return {
             "hash_id": self.hash_id,
             "source": self.source.value,
-            "identifier": (
-                self.identifier.to_dict() if self.identifier else None
-            ),
+            "identifier": (self.identifier.to_dict() if self.identifier else None),
             "full_text_path": (
                 str(self.full_text_path) if self.full_text_path else None
             ),
@@ -130,11 +122,7 @@ class ExtractedContent:
         tables_payload = payload.get("tables", [])
         tables = [ExtractedTable.from_dict(item) for item in tables_payload]
         identifier_data = payload.get("identifier")
-        identifier = (
-            Identifier.from_dict(identifier_data)
-            if identifier_data
-            else None
-        )
+        identifier = Identifier.from_dict(identifier_data) if identifier_data else None
         return cls(
             hash_id=str(payload["hash_id"]),
             source=DownloadSource(str(payload["source"])),
@@ -165,9 +153,7 @@ class ArticleExtractionBundle:
         }
 
     @classmethod
-    def from_dict(
-        cls, payload: Mapping[str, object]
-    ) -> "ArticleExtractionBundle":
+    def from_dict(cls, payload: Mapping[str, object]) -> "ArticleExtractionBundle":
         data_payload = payload.get("article_data") or {}
         metadata_payload = payload.get("article_metadata") or {}
         return cls(

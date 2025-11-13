@@ -266,11 +266,7 @@ def cache_identifier_entries(
         index_path = _index_path(settings, namespace, extractor_name)
         index = IdentifierCacheIndex.load(index_path)
         for entry in entries:
-            index.add_entry(
-                IdentifierCacheEntry.from_expansion(
-                    entry.clone_payload()
-                )
-            )
+            index.add_entry(IdentifierCacheEntry.from_expansion(entry.clone_payload()))
         index.index_path = index_path
         index.save()
 

@@ -191,9 +191,7 @@ class Settings(BaseSettings):
 
     ace_max_workers: int = Field(
         default=4,
-        description=(
-            "Maximum number of parallel workers dedicated to ACE downloads"
-        ),
+        description=("Maximum number of parallel workers dedicated to ACE downloads"),
     )
 
     # ===== Behavior flags =====
@@ -250,9 +248,7 @@ class Settings(BaseSettings):
 
     manifest_path: Optional[Path] = Field(
         default=None,
-        description=(
-            "Path to an identifiers manifest when gather stage is skipped"
-        ),
+        description=("Path to an identifiers manifest when gather stage is skipped"),
     )
 
     use_cached_inputs: bool = Field(
@@ -285,9 +281,7 @@ class Settings(BaseSettings):
             data = yaml.safe_load(fh) or {}
 
         if not isinstance(data, dict):
-            raise ValueError(
-                "Settings YAML must contain a mapping at the root"
-            )
+            raise ValueError("Settings YAML must contain a mapping at the root")
 
         return cls(**data)
 

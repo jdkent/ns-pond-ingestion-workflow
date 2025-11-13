@@ -56,9 +56,7 @@ class IDLookupService:
         any_success = False
         for id_type in self.lookup_order:
             subset = [
-                identifier
-                for identifier in pending
-                if getattr(identifier, id_type)
+                identifier for identifier in pending if getattr(identifier, id_type)
             ]
             if not subset:
                 continue
@@ -90,9 +88,7 @@ class IDLookupService:
         raise NotImplementedError
 
     # -- Internal helpers ------------------------------------------------
-    def _hydrate_from_cache(
-        self, identifiers: Identifiers
-    ) -> List[Identifier]:
+    def _hydrate_from_cache(self, identifiers: Identifiers) -> List[Identifier]:
         pending: List[Identifier] = []
         for identifier in identifiers.identifiers:
             if self._is_complete(identifier):
@@ -166,9 +162,7 @@ class IDLookupService:
                 identifiers=Identifiers([clone]),
                 sources=[self.extractor_name],
             )
-            entries.append(
-                IdentifierCacheEntry.from_expansion(expansion)
-            )
+            entries.append(IdentifierCacheEntry.from_expansion(expansion))
 
         if entries:
             cache.cache_identifier_entries(

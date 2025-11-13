@@ -27,9 +27,7 @@ def _make_settings(
 
 def test_gather_manifest_only_persists_results(tmp_path: Path) -> None:
     settings = _make_settings(tmp_path)
-    manifest = Identifiers(
-        [Identifier(pmid="1", doi="10.1/foo", pmcid="PMC1")]
-    )
+    manifest = Identifiers([Identifier(pmid="1", doi="10.1/foo", pmcid="PMC1")])
 
     result = gather_identifiers(
         settings=settings,
@@ -67,9 +65,7 @@ def test_gather_merges_pubmed_queries(
             DummySearchService.calls.append((query, start_year))
 
         def search(self) -> Identifiers:
-            return Identifiers(
-                [Identifier(pmid="12345"), Identifier(pmid="67890")]
-            )
+            return Identifiers([Identifier(pmid="12345"), Identifier(pmid="67890")])
 
     monkeypatch.setattr(
         gather,

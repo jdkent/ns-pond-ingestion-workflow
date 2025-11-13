@@ -14,7 +14,9 @@ _CONSOLE_FILTER_FLAG = "to_console"
 class _ConsoleFilter(logging.Filter):
     """Allow only records flagged for console emission."""
 
-    def filter(self, record: logging.LogRecord) -> bool:  # pragma: no cover - simple predicate
+    def filter(
+        self, record: logging.LogRecord
+    ) -> bool:  # pragma: no cover - simple predicate
         return bool(getattr(record, _CONSOLE_FILTER_FLAG, False))
 
 
@@ -33,9 +35,7 @@ def configure_logging(
     for handler in list(root_logger.handlers):
         root_logger.removeHandler(handler)
 
-    formatter = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    )
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     if log_to_file and log_file is not None:
         log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -45,9 +45,7 @@ def configure_logging(
 
     if log_to_console:
         console_handler = logging.StreamHandler()
-        console_handler.setFormatter(
-            logging.Formatter("[%(levelname)s] %(message)s")
-        )
+        console_handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
         console_handler.addFilter(_ConsoleFilter())
         root_logger.addHandler(console_handler)
 

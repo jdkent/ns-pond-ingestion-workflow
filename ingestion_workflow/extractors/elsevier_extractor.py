@@ -139,8 +139,7 @@ class ElsevierExtractor(BaseExtractor):
             )
 
         base_dir = Path(
-            self.settings.elsevier_cache_root
-            or self.settings.get_cache_dir("elsevier")
+            self.settings.elsevier_cache_root or self.settings.get_cache_dir("elsevier")
         )
         base_dir.mkdir(parents=True, exist_ok=True)
 
@@ -221,9 +220,9 @@ class ElsevierExtractor(BaseExtractor):
         extraction_root = self._resolve_extraction_root()
         extraction_root.mkdir(parents=True, exist_ok=True)
 
-        ordered_results: List[Optional[ExtractedContent]] = [
-            None
-        ] * len(download_results)
+        ordered_results: List[Optional[ExtractedContent]] = [None] * len(
+            download_results
+        )
 
         worker_count = max(1, self.settings.max_workers)
 
@@ -314,8 +313,7 @@ class ElsevierExtractor(BaseExtractor):
             return asyncio.run(_runner())
         if loop.is_running():  # pragma: no cover - defensive
             raise RuntimeError(
-                "ElsevierExtractor.download cannot run inside an active event "
-                "loop."
+                "ElsevierExtractor.download cannot run inside an active event " "loop."
             )
         return loop.run_until_complete(_runner())
 
@@ -324,26 +322,19 @@ class ElsevierExtractor(BaseExtractor):
         if self.settings.elsevier_api_key:
             overrides["ELSEVIER_API_KEY"] = self.settings.elsevier_api_key
 
-        cache_root = (
-            self.settings.elsevier_cache_root
-            or self.settings.get_cache_dir("elsevier")
+        cache_root = self.settings.elsevier_cache_root or self.settings.get_cache_dir(
+            "elsevier"
         )
         overrides["ELSEVIER_CACHE_DIR"] = str(cache_root)
 
         if self.settings.elsevier_http_proxy:
-            overrides["ELSEVIER_HTTP_PROXY"] = (
-                self.settings.elsevier_http_proxy
-            )
+            overrides["ELSEVIER_HTTP_PROXY"] = self.settings.elsevier_http_proxy
         if self.settings.elsevier_https_proxy:
-            overrides["ELSEVIER_HTTPS_PROXY"] = (
-                self.settings.elsevier_https_proxy
-            )
+            overrides["ELSEVIER_HTTPS_PROXY"] = self.settings.elsevier_https_proxy
         overrides["ELSEVIER_USE_PROXY"] = (
             "true" if self.settings.elsevier_use_proxy else "false"
         )
-        overrides["ELSEVIER_CONCURRENCY"] = str(
-            max(1, self.settings.max_workers)
-        )
+        overrides["ELSEVIER_CONCURRENCY"] = str(max(1, self.settings.max_workers))
 
         with _temporary_env(overrides):
             return get_elsevier_settings(force_reload=True)
@@ -427,9 +418,7 @@ class ElsevierExtractor(BaseExtractor):
         )
         error_message = None
         if not success:
-            error_message = (
-                "Elsevier returned metadata without content payload."
-            )
+            error_message = "Elsevier returned metadata without content payload."
 
         return DownloadResult(
             identifier=identifier,
@@ -505,11 +494,7 @@ class ElsevierExtractor(BaseExtractor):
 
     @staticmethod
     def _slug_from_record(record: Mapping[str, str], index: int) -> str:
-        candidate = (
-            record.get("doi")
-            or record.get("pmid")
-            or record.get("pmcid")
-        )
+        candidate = record.get("doi") or record.get("pmid") or record.get("pmcid")
         if not candidate:
             candidate = f"record-{index}"
         slug = re.sub(r"[^A-Za-z0-9]+", "-", candidate).strip("-").lower()
@@ -521,19 +506,13 @@ class ElsevierExtractor(BaseExtractor):
         ext = (format_hint or "").strip().lower()
         if not ext:
             clean_content_type = content_type.split(";", 1)[0].strip().lower()
-            ext = self._CONTENT_TYPE_TO_EXTENSION.get(
-                clean_content_type, "bin"
-            )
+            ext = self._CONTENT_TYPE_TO_EXTENSION.get(clean_content_type, "bin")
         file_type = self._EXTENSION_TO_FILETYPE.get(ext, FileType.BINARY)
         if ext == "bin":
             clean_content_type = content_type.split(";", 1)[0].strip().lower()
-            fallback_ext = self._CONTENT_TYPE_TO_EXTENSION.get(
-                clean_content_type
-            )
+            fallback_ext = self._CONTENT_TYPE_TO_EXTENSION.get(clean_content_type)
             if fallback_ext:
-                file_type = self._EXTENSION_TO_FILETYPE.get(
-                    fallback_ext, file_type
-                )
+                file_type = self._EXTENSION_TO_FILETYPE.get(fallback_ext, file_type)
                 ext = fallback_ext
         return ext or "bin", file_type
 
@@ -545,9 +524,7 @@ class ElsevierExtractor(BaseExtractor):
         pmid = record.get("pmid")
         if pmid:
             return "pmid", str(pmid)
-        raise ValueError(
-            "Record must contain a DOI or PMID for Elsevier download."
-        )
+        raise ValueError("Record must contain a DOI or PMID for Elsevier download.")
 
     @staticmethod
     def _lookup_key(
@@ -598,18 +575,13 @@ class ElsevierExtractor(BaseExtractor):
             if result is None:
                 result = self._build_failure_result(
                     identifier=identifier,
-                    error_message=(
-                        "Elsevier download did not produce a result."
-                    ),
+                    error_message=("Elsevier download did not produce a result."),
                 )
             ordered_results.append(result)
             emit_progress(progress_hook)
         return ordered_results
 
-
-    def _identifier_cache_key(
-        self, identifier: Identifier, index: int
-    ) -> str:
+    def _identifier_cache_key(self, identifier: Identifier, index: int) -> str:
         seed = identifier.hash_id.strip()
         if not seed:
             seed = f"identifier-{index}"
@@ -731,9 +703,7 @@ def _extract_elsevier_article(
         raise ValueError("Elsevier extraction requires metadata.json.")
 
     try:
-        metadata = json.loads(
-            metadata_file.file_path.read_text(encoding="utf-8")
-        )
+        metadata = json.loads(metadata_file.file_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
         raise ValueError(f"Failed to load Elsevier metadata: {exc}") from exc
 
@@ -793,9 +763,7 @@ def _extract_elsevier_article(
         article_text = ""
 
     # Detect coordinate space from article text
-    article_space = _coordinate_space_from_guess(
-        _neurosynth_guess_space(article_text)
-    )
+    article_space = _coordinate_space_from_guess(_neurosynth_guess_space(article_text))
 
     # Extract tables
     try:
@@ -920,9 +888,7 @@ def _extract_elsevier_article(
     # Build result
     error_message = None
     if failure_reasons:
-        error_message = "Elsevier skipped tables: " + " | ".join(
-            failure_reasons
-        )
+        error_message = "Elsevier skipped tables: " + " | ".join(failure_reasons)
 
     has_coordinates = any(table.coordinates for table in extracted_tables)
 

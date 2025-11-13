@@ -77,9 +77,7 @@ class PubMedClient:
                 "PubMed ID lookups support only 'pmid', 'pmcid', or 'doi'."
             )
 
-        if any(
-            getattr(identifier, id_type) is None for identifier in identifiers
-        ):
+        if any(getattr(identifier, id_type) is None for identifier in identifiers):
             raise ValueError(
                 f"All identifiers must provide a {id_type.upper()} for lookup."
             )
@@ -95,7 +93,7 @@ class PubMedClient:
             return identifiers
 
         batches = [
-            values[index:index + IDCONV_BATCH_SIZE]
+            values[index : index + IDCONV_BATCH_SIZE]
             for index in range(0, len(values), IDCONV_BATCH_SIZE)
         ]
 
@@ -291,9 +289,7 @@ class PubMedClient:
         response.raise_for_status()
         return response.json()
 
-    def get_metadata(
-        self, identifiers: List[Identifier]
-    ) -> Dict[str, ArticleMetadata]:
+    def get_metadata(self, identifiers: List[Identifier]) -> Dict[str, ArticleMetadata]:
         """
         Fetch article metadata for batch of identifiers using esummary.
 
@@ -325,12 +321,10 @@ class PubMedClient:
         batch_size = IDCONV_BATCH_SIZE
 
         for i in range(0, len(pmids), batch_size):
-            batch = pmids[i:i + batch_size]
+            batch = pmids[i : i + batch_size]
             try:
                 response_data = self._request_esummary(batch)
-                self._process_esummary_response(
-                    batch, response_data, pmid_map, results
-                )
+                self._process_esummary_response(batch, response_data, pmid_map, results)
             except Exception:
                 # Continue with other batches on failure
                 continue
@@ -343,9 +337,7 @@ class PubMedClient:
     )
     def _request_esummary(self, pmids: List[str]) -> Dict[str, object]:
         """Request article metadata from PubMed esummary endpoint."""
-        esummary_url = (
-            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
-        )
+        esummary_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
         params: List[Tuple[str, str]] = [
             ("db", "pubmed"),
             ("id", ",".join(pmids)),
