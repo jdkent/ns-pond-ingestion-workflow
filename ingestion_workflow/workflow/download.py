@@ -31,14 +31,17 @@ logger = logging.getLogger(__name__)
 
 
 def _elsevier_factory(settings: Settings) -> BaseExtractor:
+    """Construct the Elsevier extractor with the resolved settings."""
     return ElsevierExtractor(settings=settings)
 
 
 def _pubget_factory(settings: Settings) -> BaseExtractor:
+    """Construct the Pubget extractor with the resolved settings."""
     return PubgetExtractor(settings=settings)
 
 
 def _ace_factory(settings: Settings) -> BaseExtractor:
+    """Construct the ACE extractor with the resolved settings."""
     return ACEExtractor(settings=settings)
 
 
@@ -50,6 +53,7 @@ EXTRACTOR_FACTORIES: Dict[DownloadSource, ExtractorFactory] = {
 
 
 def _resolve_extractor(source: DownloadSource, settings: Settings) -> BaseExtractor:
+    """Resolve the configured extractor implementation for a download source."""
     try:
         factory = EXTRACTOR_FACTORIES[source]
     except KeyError as exc:  # pragma: no cover - defensive guard
@@ -59,6 +63,7 @@ def _resolve_extractor(source: DownloadSource, settings: Settings) -> BaseExtrac
 
 
 def _successful_hashes(results: Sequence[DownloadResult]) -> set[str]:
+    """Return the hash IDs for successful download results."""
     return {result.identifier.hash_id for result in results if result.success}
 
 
@@ -66,6 +71,7 @@ def _identifiers_from_hashes(
     pending: Iterable[Identifier],
     success_hashes: set[str],
 ) -> List[Identifier]:
+    """Filter pending identifiers to those whose hash IDs are not in the successes set."""
     return [
         identifier for identifier in pending if identifier.hash_id not in success_hashes
     ]
@@ -74,6 +80,7 @@ def _identifiers_from_hashes(
 def _partition_supported_identifiers(
     extractor: BaseExtractor, identifiers: Iterable[Identifier]
 ) -> tuple[list[Identifier], list[Identifier]]:
+    """Split identifiers into extractor-supported and unsupported collections."""
     supported_fields = getattr(extractor, "_SUPPORTED_IDS", None)
     identifiers_list = list(identifiers)
 
@@ -99,7 +106,11 @@ def run_downloads(
     settings: Settings | None = None,
     metrics: StageMetrics | None = None,
 ) -> List[DownloadResult]:
-    """Run download extractors in order and persist successes to cache."""
+    """
+    Run configured download sources in order,
+    using cache where possible,
+    and persist successful payloads.
+    """
 
     settings = settings or load_settings()
     remaining: List[Identifier] = list(identifiers.identifiers)
@@ -239,6 +250,10 @@ def _create_progress_bar(
     total: int,
     desc: str,
 ) -> tqdm | None:
+    """
+    Create a tqdm progress bar for download
+    processing when progress display is enabled.
+    """
     if not settings.show_progress or total <= 0:
         return None
     return tqdm(

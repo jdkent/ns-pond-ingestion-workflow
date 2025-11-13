@@ -48,7 +48,11 @@ def gather_identifiers(
     queries: Sequence[SearchQuery | str] | None = None,
     label: str | None = None,
 ) -> Identifiers:
-    """Collect, enrich, deduplicate, and persist identifiers."""
+    """
+    Collect identifiers from the manifest and/or PubMed searches,
+    fill in missing ids/add other ids,
+    and persist the combined manifest for downstream workflow stages.
+    """
 
     resolved_settings = _resolve_settings(settings)
     combined = Identifiers()
@@ -115,6 +119,10 @@ def gather_identifiers(
 
 
 def _resolve_settings(settings: Settings | None) -> Settings:
+    """
+    Load default settings if necessary and ensure required
+    directories exist before gathering identifiers.
+    """
     if settings is None:
         settings = load_settings()
     settings.ensure_directories()
@@ -125,6 +133,10 @@ def _load_manifest(
     manifest: Identifiers | str | Path,
     settings: Settings,
 ) -> Identifiers:
+    """
+    Load a manifest of identifiers from disk (or pass through an Identifiers object)
+    so the gather stage can seed the workflow without running searches.
+    """
     if isinstance(manifest, Identifiers):
         return manifest
 
@@ -145,6 +157,10 @@ def _load_manifest(
 
 
 def _extend_identifiers(target: Identifiers, source: Identifiers) -> None:
+    """
+    Append all identifiers from a source list into the combined manifest,
+    preserving existing index settings.
+    """
     for identifier in source.identifiers:
         target.append(identifier)
 
@@ -152,6 +168,10 @@ def _extend_identifiers(target: Identifiers, source: Identifiers) -> None:
 def _normalize_queries(
     queries: Sequence[SearchQuery | str] | None,
 ) -> list[SearchQuery]:
+    """
+    Convert raw search inputs (SearchQuery objects or strings) into a
+    normalized list of SearchQuery instances for the gather stage.
+    """
     if not queries:
         return []
 
@@ -165,6 +185,10 @@ def _normalize_queries(
 
 
 def _output_path(settings: Settings, label: str | None) -> Path:
+    """
+    Determine the output path for the manifest produced by the gather stage,
+    creating the manifest directory if needed.
+    """
     output_dir = settings.data_root / OUTPUT_SUBDIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -179,6 +203,10 @@ def _output_path(settings: Settings, label: str | None) -> Path:
 
 
 def _slugify(value: str) -> str:
+    """
+    Create a filesystem-safe slug from user-provided
+    labels when naming manifest files.
+    """
     mapped = re.sub(r"[^a-z0-9]+", "-", value.lower())
     slug = mapped.strip("-")
     return slug or "manifest"

@@ -17,3 +17,14 @@ orchastrator.py which calls up services to:
 - being DRY and modular
 - using batching parallel processing for cpu bound tasks
 - using batching when calling external APIs whenever possible (only have function signatures for batch calls, not single calls)
+
+## Issues
+
+- fix the export to place files in the right directory structure
+- use/generalize slug (instead of "hash")
+- improve handling of inputs that have failed before and whether to retry them
+- invalidating cache for other stages (not just download)
+- implement the cli
+- implement upload stage
+- implement ns-pond syncronization stage
+- similar functions across stages and classes (could they be abstracted?)
