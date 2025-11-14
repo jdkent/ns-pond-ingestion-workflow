@@ -255,7 +255,7 @@ def index_legacy_downloads_cli(
         extractor_name.value,
         namespace=cache_namespace,
     )
-    before = len(before_index.entries)
+    before = before_index.count()
 
     index = cache.index_legacy_downloads(
         settings,
@@ -263,7 +263,7 @@ def index_legacy_downloads_cli(
         resolved_dir,
         namespace=cache_namespace,
     )
-    after = len(index.entries)
+    after = index.count()
     added = max(0, after - before)
 
     typer.echo(

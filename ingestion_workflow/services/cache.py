@@ -4,7 +4,7 @@ This module focuses on download caching by default, but the helpers can be
 reused for other workflow namespaces (for example, ``gather`` or ``extract``)
 by providing the appropriate ``namespace`` parameter. Each extractor receives
 its own cache namespace rooted under ``cache_root/<namespace>/<extractor>``
-with an ``index.json`` that records successful downloads. The cache index is
+with an ``index.sqlite`` that records successful downloads. The cache index is
 used to avoid redundant API calls and to hydrate workflow steps in cache-only
 mode.
 
@@ -62,9 +62,9 @@ DOWNLOAD_CACHE_NAMESPACE = "download"
 EXTRACT_CACHE_NAMESPACE = "extract"
 GATHER_CACHE_NAMESPACE = "gather"
 CREATE_ANALYSES_CACHE_NAMESPACE = "create_analyses"
-INDEX_FILENAME = "index.json"
+INDEX_FILENAME = "index.sqlite"
 LOCK_FILENAME = "index.lock"
-LEGACY_INDEX_BATCH_SIZE = 1000
+LEGACY_INDEX_BATCH_SIZE = 10000
 
 
 TIndex = TypeVar("TIndex", bound=CacheIndex)
@@ -259,6 +259,7 @@ def cache_create_analyses_results(
     with _acquire_lock(settings, namespace, extractor_name):
         index_path = _index_path(settings, namespace, extractor_name)
         index = CreateAnalysesResultIndex.load(index_path)
+        entries_to_add: List[CreateAnalysesResultEntry] = []
         for result in results:
             manifest_path = _analysis_manifest_path(settings, extractor_name, result.slug)
             manifest_path.write_text(
@@ -267,9 +268,8 @@ def cache_create_analyses_results(
             )
             result.analysis_paths = [manifest_path]
             entry = CreateAnalysesResultEntry.from_result(result)
-            index.add_result(entry)
-        index.index_path = index_path
-        index.save()
+            entries_to_add.append(entry)
+        index.add_entries(entries_to_add)
 
 
 def get_identifier_cache_entry(
@@ -304,10 +304,10 @@ def cache_identifier_entries(
     with _acquire_lock(settings, namespace, extractor_name):
         index_path = _index_path(settings, namespace, extractor_name)
         index = IdentifierCacheIndex.load(index_path)
-        for entry in entries:
-            index.add_entry(IdentifierCacheEntry.from_expansion(entry.clone_payload()))
-        index.index_path = index_path
-        index.save()
+        cloned_entries = [
+            IdentifierCacheEntry.from_expansion(entry.clone_payload()) for entry in entries
+        ]
+        index.add_entries(cloned_entries)
 
 
 def partition_cached_downloads(
@@ -358,10 +358,7 @@ def cache_download_results(
     with _acquire_lock(settings, namespace, extractor_name):
         index_path = _index_path(settings, namespace, extractor_name)
         index = DownloadIndex.load(index_path)
-        for result in results:
-            index.add_download(result)
-        index.index_path = index_path
-        index.save()
+        index.add_downloads(results)
 
 
 def invalidate_download_cache(
@@ -380,12 +377,8 @@ def invalidate_download_cache(
     with _acquire_lock(settings, namespace, extractor_name):
         index_path = _index_path(settings, namespace, extractor_name)
         index = DownloadIndex.load(index_path)
-        removed = False
         for slug in slugs:
-            removed |= index.remove_download(slug)
-        if removed:
-            index.index_path = index_path
-            index.save()
+            index.remove_download(slug)
 
 
 def index_legacy_downloads(
@@ -567,13 +560,7 @@ def _build_lookup_services(settings: Settings):
 def _build_identifier_filters(
     index: DownloadIndex,
 ) -> Tuple[set[str], set[str], set[str], set[str]]:
-    slug_set: set[str] = set()
-    pmid_set: set[str] = set()
-    pmcid_set: set[str] = set()
-    doi_set: set[str] = set()
-    for entry in index.entries.values():
-        _add_identifier_keys(entry.result.identifier, slug_set, pmid_set, pmcid_set, doi_set)
-    return slug_set, pmid_set, pmcid_set, doi_set
+    return index.identifier_sets()
 
 
 def _persist_legacy_batch(
@@ -607,16 +594,14 @@ def _persist_legacy_batch(
     with _acquire_lock(settings, namespace, extractor_name):
         index_path = _index_path(settings, namespace, extractor_name)
         index = DownloadIndex.load(index_path)
-        added = 0
+        pending: List[DownloadResult] = []
         for result in new_results:
             slug = result.identifier.slug
             if not slug or index.has(slug):
                 continue
-            index.add_download(result)
-            added += 1
-        if added:
-            index.index_path = index_path
-            index.save()
+            pending.append(result)
+        if pending:
+            index.add_downloads(pending)
 
 
 def _is_duplicate_identifier(
@@ -695,7 +680,5 @@ def cache_extraction_results(
     with _acquire_lock(settings, namespace, extractor_name):
         index_path = _index_path(settings, namespace, extractor_name)
         index = ExtractionResultIndex.load(index_path)
-        for result in results:
-            index.add_extraction(ExtractionResultEntry.from_content(result))
-        index.index_path = index_path
-        index.save()
+        entries = [ExtractionResultEntry.from_content(result) for result in results]
+        index.add_entries(entries)

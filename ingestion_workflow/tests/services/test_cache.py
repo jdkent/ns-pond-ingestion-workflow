@@ -24,11 +24,11 @@ def test_index_legacy_downloads_ace(tmp_path: Path) -> None:
     index = index_legacy_downloads(settings, DownloadSource.ACE.value, source)
 
     html_files = sorted(source.rglob("*.html"))
-    assert len(index.entries) == len(html_files)
+    assert index.count() == len(html_files)
 
     sample_file = html_files[0]
     entry = next(
-        (entry for entry in index.entries.values() if entry.result.identifier.pmid == sample_file.stem),
+        (entry for entry in index.iter_entries() if entry.result.identifier.pmid == sample_file.stem),
         None,
     )
     assert entry is not None
@@ -44,10 +44,10 @@ def test_index_legacy_downloads_pubget(tmp_path: Path) -> None:
     index = index_legacy_downloads(settings, DownloadSource.PUBGET.value, source)
 
     article_dirs = [path for path in source.rglob("pmcid_*") if path.is_dir()]
-    assert len(index.entries) == len(article_dirs)
+    assert index.count() == len(article_dirs)
 
     entry = next(
-        (entry for entry in index.entries.values() if entry.result.identifier.pmcid == "PMC9056519"),
+        (entry for entry in index.iter_entries() if entry.result.identifier.pmcid == "PMC9056519"),
         None,
     )
     assert entry is not None

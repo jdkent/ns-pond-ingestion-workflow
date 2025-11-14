@@ -6,13 +6,18 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+import sqlite3
 from typing import (
     Any,
     ClassVar,
     Dict,
     Generic,
+    Iterator,
+    List,
     Mapping,
     Optional,
+    Sequence,
+    Tuple,
     Type,
     TypeVar,
 )
@@ -108,77 +113,196 @@ class CacheEnvelope(Generic[PayloadT]):
         return str(candidate)
 
 
-@dataclass
 class CacheIndex(Generic[EnvelopeT]):
-    """Generic index for cache envelopes."""
+    """SQLite-backed index for cache envelopes."""
 
-    entries: Dict[str, EnvelopeT] = field(default_factory=dict)
-    version: int = CACHE_SCHEMA_VERSION
-    index_path: Optional[Path] = None
-
-    entries_key: ClassVar[str] = "entries"
+    table_name: ClassVar[str] = "cache_entries"
     envelope_type: ClassVar[Type[EnvelopeT]]
     schema_version: ClassVar[int] = CACHE_SCHEMA_VERSION
+    identifier_columns: ClassVar[Mapping[str, str]] = {
+        "pmid": "TEXT",
+        "pmcid": "TEXT",
+        "doi": "TEXT",
+    }
+    extra_columns: ClassVar[Mapping[str, str]] = {}
 
-    def add(self, entry: EnvelopeT) -> None:
-        self.entries[entry.cache_key()] = entry
+    def __init__(self, connection: sqlite3.Connection, index_path: Path):
+        self._conn = connection
+        self.index_path = index_path
+        self.version = CACHE_SCHEMA_VERSION
+        self._initialize()
 
-    def get(self, slug: str) -> Optional[EnvelopeT]:
-        return self.entries.get(slug)
-
-    def has(self, slug: str) -> bool:
-        return slug in self.entries
-
-    def remove(self, slug: str) -> bool:
-        return self.entries.pop(slug, None) is not None
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "version": self.version,
-            self.entries_key: {key: entry.to_dict() for key, entry in self.entries.items()},
-        }
-
-    def save(self) -> None:
-        if self.index_path is None:
-            raise ValueError("index_path must be set before saving")
-        self.index_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(
-            self.to_dict(),
-            indent=2,
-            sort_keys=True,
-        )
-        tmp_path = self.index_path.with_suffix(".tmp")
-        tmp_path.write_text(payload, encoding="utf-8")
-        tmp_path.replace(self.index_path)
+    def close(self) -> None:
+        self._conn.close()
 
     @classmethod
     def load(cls, index_path: Path) -> "CacheIndex[EnvelopeT]":
-        if not index_path.exists():
-            index = cls()
-            index.index_path = index_path
-            return index
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(index_path)
+        cls._prepare_connection(connection)
+        return cls(connection, index_path)
 
-        raw = index_path.read_text(encoding="utf-8")
-        data = json.loads(raw)
-        entries_payload = data.get(cls.entries_key, {})
-        entries: Dict[str, EnvelopeT] = {}
+    @staticmethod
+    def _prepare_connection(connection: sqlite3.Connection) -> None:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON;")
+        connection.execute("PRAGMA journal_mode=WAL;")
+        connection.execute("PRAGMA synchronous=NORMAL;")
 
-        if isinstance(entries_payload, dict):
-            source_items = entries_payload.items()
-        else:
-            source_items = [(None, item) for item in entries_payload]
-
-        for key, value in source_items:
-            entry = cls.envelope_type.from_dict(value)
-            entry_key = key or entry.cache_key()
-            entries[entry_key] = entry
-
-        index = cls(
-            entries=entries,
-            version=int(data.get("version", cls.schema_version)),
+    def _initialize(self) -> None:
+        column_schema = self._column_schema()
+        columns_sql = "".join(f", {name} {definition}" for name, definition in column_schema.items())
+        self._conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.table_name} (
+                slug TEXT PRIMARY KEY,
+                payload_json BLOB NOT NULL,
+                cached_at TEXT NOT NULL,
+                metadata_json BLOB
+                {columns_sql}
+            )
+            """
         )
-        index.index_path = index_path
-        return index
+        self._ensure_columns(column_schema)
+        for statement in self._identifier_index_statements():
+            self._conn.execute(statement)
+        for statement in self._index_statements():
+            self._conn.execute(statement)
+        self._conn.commit()
+
+    def _column_schema(self) -> Dict[str, str]:
+        schema = dict(self.identifier_columns)
+        schema.update(self.extra_columns)
+        return schema
+
+    def _ensure_columns(self, column_schema: Mapping[str, str]) -> None:
+        cursor = self._conn.execute(f"PRAGMA table_info({self.table_name})")
+        existing = {row["name"] for row in cursor}
+        for name, definition in column_schema.items():
+            if name in existing:
+                continue
+            self._conn.execute(
+                f"ALTER TABLE {self.table_name} ADD COLUMN {name} {definition}"
+            )
+
+    def _identifier_index_statements(self) -> Sequence[str]:
+        return tuple(
+            f"CREATE INDEX IF NOT EXISTS {self.table_name}_{column}_idx ON {self.table_name}({column})"
+            for column in self.identifier_columns
+        )
+
+    def _index_statements(self) -> Sequence[str]:  # pragma: no cover - overridden when needed
+        return ()
+
+    def _column_names(self) -> List[str]:
+        columns = ["slug", "payload_json", "cached_at", "metadata_json"]
+        columns.extend(self.identifier_columns.keys())
+        columns.extend(self.extra_columns.keys())
+        return columns
+
+    def add_entries(self, entries: Sequence[EnvelopeT]) -> None:
+        if not entries:
+            return
+        column_names = self._column_names()
+        placeholders = ", ".join("?" for _ in column_names)
+        assignments = ", ".join(
+            f"{column}=excluded.{column}" for column in column_names if column != "slug"
+        )
+        sql = (
+            f"INSERT INTO {self.table_name} ({', '.join(column_names)}) "
+            f"VALUES ({placeholders}) "
+            f"ON CONFLICT(slug) DO UPDATE SET {assignments}"
+        )
+        rows = [self._row_from_entry(entry) for entry in entries]
+        with self._conn:
+            self._conn.executemany(sql, rows)
+
+    def add(self, entry: EnvelopeT) -> None:
+        self.add_entries([entry])
+
+    def get(self, slug: str) -> Optional[EnvelopeT]:
+        cursor = self._conn.execute(
+            f"SELECT * FROM {self.table_name} WHERE slug = ?",
+            (slug,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return self._entry_from_row(row)
+
+    def has(self, slug: str) -> bool:
+        cursor = self._conn.execute(
+            f"SELECT 1 FROM {self.table_name} WHERE slug = ? LIMIT 1",
+            (slug,),
+        )
+        return cursor.fetchone() is not None
+
+    def remove(self, slug: str) -> bool:
+        with self._conn:
+            cursor = self._conn.execute(
+                f"DELETE FROM {self.table_name} WHERE slug = ?",
+                (slug,),
+            )
+        return cursor.rowcount > 0
+
+    def count(self) -> int:
+        cursor = self._conn.execute(f"SELECT COUNT(*) FROM {self.table_name}")
+        result = cursor.fetchone()
+        return 0 if result is None else int(result[0])
+
+    def iter_entries(self) -> Iterator[EnvelopeT]:
+        cursor = self._conn.execute(f"SELECT * FROM {self.table_name}")
+        for row in cursor:
+            yield self._entry_from_row(row)
+
+    @property
+    def entries(self) -> Dict[str, EnvelopeT]:
+        return {entry.cache_key(): entry for entry in self.iter_entries()}
+
+    def _entry_from_row(self, row: sqlite3.Row) -> EnvelopeT:
+        payload_blob = row["payload_json"]
+        metadata_blob = row["metadata_json"]
+        payload_data = json.loads(payload_blob)
+        metadata = json.loads(metadata_blob) if metadata_blob else {}
+        entry_payload = {
+            "slug": row["slug"],
+            "cached_at": row["cached_at"],
+            "metadata": metadata,
+            "payload": payload_data,
+        }
+        return self.envelope_type.from_dict(entry_payload)
+
+    def _identifier_from_entry(self, entry: EnvelopeT) -> Optional[Identifier]:  # pragma: no cover - override hook
+        return None
+
+    def _extra_values(self, entry: EnvelopeT) -> Dict[str, Any]:  # pragma: no cover - override hook
+        return {}
+
+    def _row_from_entry(self, entry: EnvelopeT) -> tuple[Any, ...]:
+        base_values: List[Any] = [
+            entry.cache_key(),
+            self._serialize_payload(entry),
+            entry.cached_at.isoformat(),
+            self._serialize_metadata(entry),
+        ]
+        identifier = self._identifier_from_entry(entry)
+        for column in self.identifier_columns.keys():
+            value = getattr(identifier, column, None) if identifier else None
+            base_values.append(value)
+        extras = self._extra_values(entry)
+        for column in self.extra_columns.keys():
+            base_values.append(extras.get(column))
+        return tuple(base_values)
+
+    @staticmethod
+    def _serialize_payload(entry: CacheEnvelope[Any]) -> str:
+        payload_dict = entry._encode_payload()
+        return json.dumps(payload_dict)
+
+    @staticmethod
+    def _serialize_metadata(entry: CacheEnvelope[Any]) -> str:
+        metadata = dict(entry.metadata)
+        return json.dumps(metadata)
 
 
 @dataclass
@@ -198,21 +322,59 @@ class DownloadCacheEntry(CacheEnvelope[DownloadResult]):
         return self.payload
 
 
-@dataclass
 class DownloadIndex(CacheIndex[DownloadCacheEntry]):
     """Index for cached download envelopes."""
 
-    entries_key: ClassVar[str] = "downloads"
+    table_name: ClassVar[str] = "downloads"
     envelope_type: ClassVar[Type[DownloadCacheEntry]] = DownloadCacheEntry
+    extra_columns: ClassVar[Mapping[str, str]] = {
+        "source": "TEXT",
+    }
+
+    def _extra_values(self, entry: DownloadCacheEntry) -> Dict[str, Any]:
+        source = entry.result.source.value if entry.result.source else None
+        return {
+            "source": source,
+        }
+
+    def _identifier_from_entry(self, entry: DownloadCacheEntry) -> Optional[Identifier]:
+        return entry.result.identifier
 
     def add_download(self, result: DownloadResult) -> None:
-        self.add(DownloadCacheEntry.from_result(result))
+        self.add_entries([DownloadCacheEntry.from_result(result)])
+
+    def add_downloads(self, results: Sequence[DownloadResult]) -> None:
+        entries = [DownloadCacheEntry.from_result(result) for result in results]
+        self.add_entries(entries)
 
     def get_download(self, slug: str) -> Optional[DownloadCacheEntry]:
         return self.get(slug)
 
     def remove_download(self, slug: str) -> bool:
         return self.remove(slug)
+
+    def identifier_sets(self) -> Tuple[set[str], set[str], set[str], set[str]]:
+        slug_set: set[str] = set()
+        pmid_set: set[str] = set()
+        pmcid_set: set[str] = set()
+        doi_set: set[str] = set()
+        cursor = self._conn.execute(
+            f"SELECT slug, pmid, pmcid, doi FROM {self.table_name}"
+        )
+        for row in cursor:
+            slug = row["slug"]
+            if slug:
+                slug_set.add(slug)
+            pmid = row["pmid"]
+            if pmid:
+                pmid_set.add(pmid)
+            pmcid = row["pmcid"]
+            if pmcid:
+                pmcid_set.add(pmcid)
+            doi = row["doi"]
+            if doi:
+                doi_set.add(doi)
+        return slug_set, pmid_set, pmcid_set, doi_set
 
 
 @dataclass
@@ -240,15 +402,17 @@ class IdentifierCacheEntry(CacheEnvelope[IdentifierExpansion]):
         return self.payload.sources
 
 
-@dataclass
 class IdentifierCacheIndex(CacheIndex[IdentifierCacheEntry]):
     """Index for identifier expansion envelopes."""
 
-    entries_key: ClassVar[str] = "identifier_entries"
+    table_name: ClassVar[str] = "identifier_entries"
     envelope_type: ClassVar[Type[IdentifierCacheEntry]] = IdentifierCacheEntry
 
     def add_entry(self, entry: IdentifierCacheEntry) -> None:
         self.add(entry)
+
+    def _identifier_from_entry(self, entry: IdentifierCacheEntry) -> Optional[Identifier]:
+        return entry.seed_identifier
 
 
 @dataclass
@@ -271,11 +435,10 @@ class ExtractionResultEntry(CacheEnvelope[ExtractedContent]):
         return self.payload.tables
 
 
-@dataclass
 class ExtractionResultIndex(CacheIndex[ExtractionResultEntry]):
     """Index for extraction result envelopes."""
 
-    entries_key: ClassVar[str] = "extractions"
+    table_name: ClassVar[str] = "extractions"
     envelope_type: ClassVar[Type[ExtractionResultEntry]] = ExtractionResultEntry
 
     def add_extraction(self, entry: ExtractionResultEntry) -> None:
@@ -286,6 +449,9 @@ class ExtractionResultIndex(CacheIndex[ExtractionResultEntry]):
 
     def has_extraction(self, slug: str) -> bool:
         return self.has(slug)
+
+    def _identifier_from_entry(self, entry: ExtractionResultEntry) -> Optional[Identifier]:
+        return entry.content.identifier
 
 
 @dataclass
@@ -312,15 +478,17 @@ class CreateAnalysesResultEntry(CacheEnvelope[CreateAnalysesResult]):
         return self.payload.error_message
 
 
-@dataclass
 class CreateAnalysesResultIndex(CacheIndex[CreateAnalysesResultEntry]):
     """Index for cached create-analyses results."""
 
-    entries_key: ClassVar[str] = "create_analyses"
+    table_name: ClassVar[str] = "create_analyses"
     envelope_type: ClassVar[Type[CreateAnalysesResultEntry]] = CreateAnalysesResultEntry
 
     def add_result(self, entry: CreateAnalysesResultEntry) -> None:
         self.add(entry)
+
+    def _identifier_from_entry(self, entry: CreateAnalysesResultEntry) -> Optional[Identifier]:
+        return entry.payload.analysis_collection.identifier
 
 
 @dataclass
@@ -393,15 +561,17 @@ class MetadataCache(CacheEnvelope[ArticleMetadata]):
         }
 
 
-@dataclass
 class MetadataCacheIndex(CacheIndex[MetadataCache]):
     """Index for cached metadata records."""
 
-    entries_key: ClassVar[str] = "metadata_entries"
+    table_name: ClassVar[str] = "metadata_entries"
     envelope_type: ClassVar[Type[MetadataCache]] = MetadataCache
 
     def add_metadata(self, entry: MetadataCache) -> None:
         self.add(entry)
+
+    def _identifier_from_entry(self, entry: MetadataCache) -> Optional[Identifier]:  # pragma: no cover - metadata may not include identifiers
+        return None
 
 
 __all__ = [
