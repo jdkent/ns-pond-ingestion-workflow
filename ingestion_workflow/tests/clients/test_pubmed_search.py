@@ -1,4 +1,5 @@
 import pytest
+import requests
 
 from ingestion_workflow.clients.pubmed import (
     ESEARCH_MAX_RESULTS,
@@ -60,6 +61,17 @@ def test_pubmed_client_search_splits_large_result_set(monkeypatch):
         ids = [f"{year}001", f"{year}002"]
         return ids, len(ids)
 
+    def fake_count(
+        query: str,
+        *,
+        mindate=None,
+        maxdate=None,
+    ) -> int:
+        if mindate is None and maxdate is None:
+            return ESEARCH_MAX_RESULTS
+        return 2
+
+    monkeypatch.setattr(client, "_esearch_count", fake_count)
     monkeypatch.setattr(client, "_collect_esearch_ids", fake_collect)
     monkeypatch.setattr(client, "_current_year", lambda: 1992)
 
@@ -105,3 +117,31 @@ def test_pubmed_search_service_requires_email(monkeypatch):
 
     with pytest.raises(ValueError):
         PubMedSearchService("query", settings)
+
+
+def test_pubmed_request_json_handles_invalid_control_chars(monkeypatch):
+    client = PubMedClient(email="tests@example.com")
+    invalid_json = '{"esearchresult": {"ERROR": "Search Backend failed\nTry again"}}'
+
+    class DummyResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            raise requests.exceptions.JSONDecodeError("bad json", self.text, 0)
+
+    monkeypatch.setattr(client, "_rate_limit_sleep", lambda: None)
+    monkeypatch.setattr(client._session, "get", lambda *_args, **_kwargs: DummyResponse(invalid_json))
+
+    payload = client._request_json("https://example.com", params=[])
+    assert payload["esearchresult"]["ERROR"].startswith("Search Backend failed")
+
+
+@pytest.mark.vcr()
+def test_pubmed_client_search_real_api():
+    client = PubMedClient(email="tests@example.com", tool="ingestion-workflow-tests")
+    results = client.search("codex-nonexistent-term-zzqvwp[Title]")
+    assert isinstance(results, Identifiers)

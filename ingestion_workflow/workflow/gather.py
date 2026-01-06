@@ -84,6 +84,7 @@ def gather_identifiers(
         _extend_identifiers(combined, search_results)
         cache_hits += before_extend
 
+    # deduplicate repeats from searches and manifests before expansion
     combined.deduplicate()
 
     expansion_stats: dict[str, int] = {}
@@ -101,6 +102,7 @@ def gather_identifiers(
         after_expand = len(combined.identifiers)
         expansion_stats[provider] = after_expand - before_expand
 
+    # final deduplication after all expansions
     combined.deduplicate()
     combined.set_index("pmid", "doi", "pmcid")
 

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import calendar
 import time
 from datetime import datetime
+import json
+import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import requests
@@ -52,19 +55,56 @@ class PubMedClient:
         if not query:
             return Identifiers()
 
-        pmids, total_count = self._collect_esearch_ids(query)
+        total_count = self._esearch_count(query)
+        if total_count == 0:
+            return Identifiers()
 
         if total_count >= ESEARCH_MAX_RESULTS:
+            # Break large queries into smaller date windows to stay under ESearch limits.
             pmid_set: set[str] = set()
             current_year = self._current_year()
             for year in range(start_year, current_year + 1):
-                yearly_pmids, _ = self._collect_esearch_ids(
-                    query,
-                    mindate=year,
-                    maxdate=year,
-                )
-                pmid_set.update(yearly_pmids)
+                year_count = self._esearch_count(query, mindate=year, maxdate=year)
+                if year_count == 0:
+                    continue
+                if year_count >= ESEARCH_MAX_RESULTS:
+                    for month in range(1, 13):
+                        last_day = calendar.monthrange(year, month)[1]
+                        month_start = f"{year}/{month:02d}/01"
+                        month_end = f"{year}/{month:02d}/{last_day:02d}"
+                        month_count = self._esearch_count(
+                            query,
+                            mindate=month_start,
+                            maxdate=month_end,
+                        )
+                        if month_count == 0:
+                            continue
+                        if month_count >= ESEARCH_MAX_RESULTS:
+                            for day in range(1, last_day + 1):
+                                day_value = f"{year}/{month:02d}/{day:02d}"
+                                daily_pmids, _ = self._collect_esearch_ids(
+                                    query,
+                                    mindate=day_value,
+                                    maxdate=day_value,
+                                )
+                                pmid_set.update(daily_pmids)
+                        else:
+                            monthly_pmids, _ = self._collect_esearch_ids(
+                                query,
+                                mindate=month_start,
+                                maxdate=month_end,
+                            )
+                            pmid_set.update(monthly_pmids)
+                else:
+                    yearly_pmids, _ = self._collect_esearch_ids(
+                        query,
+                        mindate=year,
+                        maxdate=year,
+                    )
+                    pmid_set.update(yearly_pmids)
             pmids = sorted(pmid_set)
+        else:
+            pmids, _ = self._collect_esearch_ids(query)
 
         identifiers = Identifiers([Identifier(pmid=pmid) for pmid in pmids])
         identifiers.set_index("pmid")
@@ -198,8 +238,8 @@ class PubMedClient:
         self,
         query: str,
         *,
-        mindate: Optional[int] = None,
-        maxdate: Optional[int] = None,
+        mindate: Optional[str | int] = None,
+        maxdate: Optional[str | int] = None,
         retmax: int = ESEARCH_CHUNK_SIZE,
     ) -> Tuple[List[str], int]:
         pmids: List[str] = []
@@ -231,14 +271,35 @@ class PubMedClient:
 
         return pmids, total_count
 
+    def _esearch_count(
+        self,
+        query: str,
+        *,
+        mindate: Optional[str | int] = None,
+        maxdate: Optional[str | int] = None,
+    ) -> int:
+        payload = self._esearch(
+            query,
+            retstart=0,
+            retmax=0,
+            mindate=mindate,
+            maxdate=maxdate,
+        )
+        esearch_result = payload.get("esearchresult", {})
+        count_value = esearch_result.get("count", 0)
+        try:
+            return int(count_value)
+        except (TypeError, ValueError):
+            return 0
+
     def _esearch(
         self,
         query: str,
         *,
         retstart: int,
         retmax: int,
-        mindate: Optional[int] = None,
-        maxdate: Optional[int] = None,
+        mindate: Optional[str | int] = None,
+        maxdate: Optional[str | int] = None,
     ) -> Dict[str, object]:
         params: List[Tuple[str, str]] = [
             ("db", "pubmed"),
@@ -283,7 +344,28 @@ class PubMedClient:
         self._rate_limit_sleep()
         response = self._session.get(url, params=params, timeout=30)
         response.raise_for_status()
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as exc:
+            text = response.text
+            try:
+                import simplejson
+            except ImportError:
+                simplejson = None
+
+            if simplejson is not None:
+                try:
+                    return simplejson.loads(text, strict=False)
+                except simplejson.JSONDecodeError:
+                    pass
+
+            cleaned = re.sub(r"[\x00-\x1f]", "", text or "")
+            try:
+                return json.loads(cleaned)
+            except json.JSONDecodeError:
+                raise ValueError(
+                    f"Failed to parse JSON response from {url}"
+                ) from exc
 
     def _request_xml(
         self,
