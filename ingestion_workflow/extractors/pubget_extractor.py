@@ -45,9 +45,12 @@ from ingestion_workflow.models import (
     Identifier,
     Identifiers,
 )
+from ingestion_workflow.utils.progress import emit_progress
 
 
 logger = logging.getLogger(__name__)
+
+PUBGET_PMCID_BATCH_SIZE = 20_000
 
 
 class PubgetExtractor(BaseExtractor):
@@ -86,122 +89,39 @@ class PubgetExtractor(BaseExtractor):
             )
 
         data_dir = self._resolve_data_dir()
-        pmcids_to_fetch = [int(pmcid) for pmcid in sorted(pmcid_map)]
-
-        try:
-            articlesets_dir, download_code = download_pmcids(
-                pmcids_to_fetch,
-                data_dir=data_dir,
-                api_key=self.settings.pubmed_api_key,
-                retmax=self.settings.pubmed_batch_size,
-            )
-        except Exception as exc:  # pragma: no cover - surfaced to caller
-            failure_message = f"Pubget download failed: {exc}"
-            for indices in pmcid_map.values():
-                for idx in indices:
-                    identifier = identifiers.identifiers[idx]
-                    results_by_index[idx] = self._build_failure(
-                        identifier,
-                        failure_message,
-                    )
-            return self._ordered_results(
-                identifiers,
-                results_by_index,
-                lambda identifier, msg=failure_message: self._build_failure(identifier, msg),
-                progress_hook=progress_hook,
+        unique_pmcids = sorted(pmcid_map)
+        pmcid_batches = list(self._chunk_pmcids(unique_pmcids, PUBGET_PMCID_BATCH_SIZE))
+        if len(pmcid_batches) > 1:
+            logger.info(
+                "Pubget splitting %d PMCIDs into %d batches (max %d per batch).",
+                len(unique_pmcids),
+                len(pmcid_batches),
+                PUBGET_PMCID_BATCH_SIZE,
             )
 
-        if download_code == ExitCode.ERROR:
-            failure_message = "Pubget reported an error while downloading PMCIDs."
-            for indices in pmcid_map.values():
-                for idx in indices:
-                    identifier = identifiers.identifiers[idx]
-                    results_by_index[idx] = self._build_failure(
-                        identifier,
-                        failure_message,
-                    )
-            return self._ordered_results(
-                identifiers,
-                results_by_index,
-                lambda identifier, msg=failure_message: self._build_failure(identifier, msg),
-                progress_hook=progress_hook,
-            )
-
-        n_jobs = max(1, self.settings.max_workers)
-        try:
-            articles_dir, extract_code = extract_articles(
-                articlesets_dir,
-                n_jobs=n_jobs,
-            )
-        except Exception as exc:  # pragma: no cover - surfaced to caller
-            failure_message = f"Pubget extraction failed: {exc}"
-            for indices in pmcid_map.values():
-                for idx in indices:
-                    identifier = identifiers.identifiers[idx]
-                    results_by_index[idx] = self._build_failure(
-                        identifier,
-                        failure_message,
-                    )
-            return self._ordered_results(
-                identifiers,
-                results_by_index,
-                lambda identifier, msg=failure_message: self._build_failure(identifier, msg),
-                progress_hook=progress_hook,
-            )
-
-        if extract_code == ExitCode.ERROR:
-            failure_message = "Pubget failed to extract downloaded articles."
-            for indices in pmcid_map.values():
-                for idx in indices:
-                    identifier = identifiers.identifiers[idx]
-                    results_by_index[idx] = self._build_failure(
-                        identifier,
-                        failure_message,
-                    )
-            return self._ordered_results(
-                identifiers,
-                results_by_index,
-                lambda identifier, msg=failure_message: self._build_failure(identifier, msg),
-                progress_hook=progress_hook,
-            )
-
-        warning_messages: List[str] = []
-        if download_code == ExitCode.INCOMPLETE:
-            warning_messages.append(
-                "Pubget reported an incomplete download; some PMCIDs may be missing."
-            )
-        if extract_code == ExitCode.INCOMPLETE:
-            warning_messages.append(
-                "Pubget reported incomplete article extraction; outputs may be partial."
-            )
-        combined_warning = " ".join(warning_messages) if warning_messages else None
-
-        article_index = self._index_articles(articles_dir)
-        for pmcid, indices in pmcid_map.items():
-            article_dir = article_index.get(pmcid)
-            for idx in indices:
-                identifier = identifiers.identifiers[idx]
-                if article_dir is None:
-                    message = combined_warning or (
-                        "Pubget did not produce output for the requested PMCID."
-                    )
-                    results_by_index[idx] = self._build_failure(
-                        identifier,
-                        message,
-                    )
-                    continue
-                results_by_index[idx] = self._build_success(
-                    identifier,
-                    article_dir,
-                    combined_warning,
+        for batch_index, batch_pmcids in enumerate(pmcid_batches, start=1):
+            batch_label = f"batch {batch_index}/{len(pmcid_batches)}"
+            if len(pmcid_batches) > 1:
+                logger.info(
+                    "Pubget processing %s with %d PMCIDs.",
+                    batch_label,
+                    len(batch_pmcids),
                 )
+            self._download_batch(
+                identifiers=identifiers,
+                results_by_index=results_by_index,
+                pmcid_map=pmcid_map,
+                batch_pmcids=batch_pmcids,
+                data_dir=data_dir,
+                batch_label=batch_label,
+                progress_hook=progress_hook,
+            )
 
         default_message = "Pubget did not return content for this identifier."
         return self._ordered_results(
             identifiers,
             results_by_index,
             lambda identifier, msg=default_message: self._build_failure(identifier, msg),
-            progress_hook=progress_hook,
         )
 
     def extract(
@@ -252,6 +172,158 @@ class PubgetExtractor(BaseExtractor):
             return None
         # Remove leading zeros for consistent lookups.
         return str(int(value))
+
+    def _chunk_pmcids(
+        self,
+        pmcids: List[str],
+        batch_size: int,
+    ) -> List[List[str]]:
+        if batch_size <= 0:
+            raise ValueError("Pubget PMCID batch size must be positive.")
+        return [
+            pmcids[index : index + batch_size]
+            for index in range(0, len(pmcids), batch_size)
+        ]
+
+    def _download_batch(
+        self,
+        *,
+        identifiers: Identifiers,
+        results_by_index: Dict[int, DownloadResult],
+        pmcid_map: Dict[str, List[int]],
+        batch_pmcids: List[str],
+        data_dir: Path,
+        batch_label: str,
+        progress_hook: Callable[[int], None] | None = None,
+    ) -> None:
+        try:
+            articlesets_dir, download_code = download_pmcids(
+                [int(pmcid) for pmcid in batch_pmcids],
+                data_dir=data_dir,
+                api_key=self.settings.pubmed_api_key,
+                retmax=self.settings.pubmed_batch_size,
+            )
+        except Exception as exc:  # pragma: no cover - surfaced to caller
+            self._mark_batch_failure(
+                identifiers=identifiers,
+                results_by_index=results_by_index,
+                pmcid_map=pmcid_map,
+                batch_pmcids=batch_pmcids,
+                message=f"Pubget download failed for {batch_label}: {exc}",
+                progress_hook=progress_hook,
+            )
+            return
+
+        if download_code == ExitCode.ERROR:
+            self._mark_batch_failure(
+                identifiers=identifiers,
+                results_by_index=results_by_index,
+                pmcid_map=pmcid_map,
+                batch_pmcids=batch_pmcids,
+                message=f"Pubget reported a download error for {batch_label}.",
+                progress_hook=progress_hook,
+            )
+            return
+
+        n_jobs = max(1, self.settings.max_workers)
+        try:
+            articles_dir, extract_code = extract_articles(
+                articlesets_dir,
+                n_jobs=n_jobs,
+            )
+        except Exception as exc:  # pragma: no cover - surfaced to caller
+            self._mark_batch_failure(
+                identifiers=identifiers,
+                results_by_index=results_by_index,
+                pmcid_map=pmcid_map,
+                batch_pmcids=batch_pmcids,
+                message=f"Pubget extraction failed for {batch_label}: {exc}",
+                progress_hook=progress_hook,
+            )
+            return
+
+        if extract_code == ExitCode.ERROR:
+            self._mark_batch_failure(
+                identifiers=identifiers,
+                results_by_index=results_by_index,
+                pmcid_map=pmcid_map,
+                batch_pmcids=batch_pmcids,
+                message=f"Pubget extraction failed for {batch_label}.",
+                progress_hook=progress_hook,
+            )
+            return
+
+        warning_messages: List[str] = []
+        if download_code == ExitCode.INCOMPLETE:
+            warning_messages.append(
+                f"Pubget reported an incomplete download for {batch_label}; some PMCIDs may be missing."
+            )
+        if extract_code == ExitCode.INCOMPLETE:
+            warning_messages.append(
+                f"Pubget reported incomplete article extraction for {batch_label}; outputs may be partial."
+            )
+        combined_warning = " ".join(warning_messages) if warning_messages else None
+
+        article_index = self._index_articles(articles_dir)
+        for pmcid in batch_pmcids:
+            article_dir = article_index.get(pmcid)
+            for idx in pmcid_map[pmcid]:
+                identifier = identifiers.identifiers[idx]
+                if article_dir is None:
+                    message = combined_warning or (
+                        f"Pubget did not produce output for the requested PMCID in {batch_label}."
+                    )
+                    self._store_result(
+                        results_by_index=results_by_index,
+                        index=idx,
+                        result=self._build_failure(
+                            identifier,
+                            message,
+                        ),
+                        progress_hook=progress_hook,
+                    )
+                    continue
+                self._store_result(
+                    results_by_index=results_by_index,
+                    index=idx,
+                    result=self._build_success(
+                        identifier,
+                        article_dir,
+                        combined_warning,
+                    ),
+                    progress_hook=progress_hook,
+                )
+
+    def _mark_batch_failure(
+        self,
+        *,
+        identifiers: Identifiers,
+        results_by_index: Dict[int, DownloadResult],
+        pmcid_map: Dict[str, List[int]],
+        batch_pmcids: List[str],
+        message: str,
+        progress_hook: Callable[[int], None] | None = None,
+    ) -> None:
+        for pmcid in batch_pmcids:
+            for idx in pmcid_map[pmcid]:
+                identifier = identifiers.identifiers[idx]
+                self._store_result(
+                    results_by_index=results_by_index,
+                    index=idx,
+                    result=self._build_failure(identifier, message),
+                    progress_hook=progress_hook,
+                )
+
+    @staticmethod
+    def _store_result(
+        *,
+        results_by_index: Dict[int, DownloadResult],
+        index: int,
+        result: DownloadResult,
+        progress_hook: Callable[[int], None] | None = None,
+    ) -> None:
+        results_by_index[index] = result
+        emit_progress(progress_hook)
 
     def _index_articles(self, articles_dir: Path) -> Dict[str, Path]:
         index: Dict[str, Path] = {}
