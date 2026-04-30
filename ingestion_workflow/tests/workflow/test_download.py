@@ -18,15 +18,19 @@ from ingestion_workflow.workflow.download import (
 
 
 class _FakeElsevierExtractor(BaseExtractor):
+    DOWNLOAD_BATCH_SIZE: int | None = None
+
     def __init__(self, *, success_dir: Path, success_targets: set[str]):
         self._success_dir = success_dir
         self._success_targets = success_targets
+        self.batch_sizes: list[int] = []
 
     def download(
         self,
         identifiers: Identifiers,
         progress_hook=None,
     ) -> list[DownloadResult]:
+        self.batch_sizes.append(len(identifiers.identifiers))
         results: list[DownloadResult] = []
         for identifier in identifiers.identifiers:
             if identifier.slug in self._success_targets:
@@ -174,3 +178,55 @@ def test_run_downloads_ignores_cache_when_requested(monkeypatch, tmp_path):
     assert len(results) == 1
     assert results[0].success is True
     assert results[0].identifier == identifiers.identifiers[0]
+
+
+def test_run_downloads_checkpoints_batched_extractors(monkeypatch, tmp_path):
+    settings = Settings(
+        cache_root=tmp_path / "cache",
+        data_root=tmp_path / "data",
+        download_sources=[DownloadSource.ELSEVIER.value],
+    )
+
+    identifiers = Identifiers(
+        [
+            Identifier(pmid="500"),
+            Identifier(pmid="600"),
+            Identifier(pmid="700"),
+            Identifier(pmid="800"),
+            Identifier(pmid="900"),
+        ]
+    )
+
+    extractor = _FakeElsevierExtractor(
+        success_dir=tmp_path / "success",
+        success_targets={identifier.slug for identifier in identifiers.identifiers},
+    )
+    extractor.DOWNLOAD_BATCH_SIZE = 2
+
+    def fake_factory(_settings: Settings) -> BaseExtractor:
+        return extractor
+
+    cache_calls: list[int] = []
+    original_cache_download_results = cache.cache_download_results
+
+    def recording_cache_download_results(*args, results, **kwargs):
+        cache_calls.append(len(results))
+        return original_cache_download_results(*args, results=results, **kwargs)
+
+    monkeypatch.setitem(
+        EXTRACTOR_FACTORIES,
+        DownloadSource.ELSEVIER,
+        fake_factory,
+    )
+    monkeypatch.setattr(
+        cache,
+        "cache_download_results",
+        recording_cache_download_results,
+    )
+
+    results = run_downloads(identifiers, settings=settings)
+
+    assert len(results) == 5
+    assert all(result.success for result in results)
+    assert extractor.batch_sizes == [2, 2, 1]
+    assert cache_calls == [2, 2, 1]
