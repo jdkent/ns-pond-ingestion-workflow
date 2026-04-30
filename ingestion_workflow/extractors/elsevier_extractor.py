@@ -11,15 +11,15 @@ import math
 import os
 import re
 from pathlib import Path
-from collections import deque
-from typing import Any, Callable, Deque, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from lxml import etree
 from pubget._coordinate_space import _neurosynth_guess_space
 from pubget._coordinates import _extract_coordinates_from_table
 
+from elsevier_coordinate_extraction.cache import FileCache
 from elsevier_coordinate_extraction.client import ScienceDirectClient
-from elsevier_coordinate_extraction.download.api import download_articles
+from elsevier_coordinate_extraction.download.api import _download_record
 from elsevier_coordinate_extraction.extract.text import save_article_text
 from elsevier_coordinate_extraction.settings import (
     Settings as ElsevierSettings,
@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 class ElsevierExtractor(BaseExtractor):
     """Extractor that uses Elsevier to download and extract article content."""
 
+    DOWNLOAD_BATCH_SIZE = 500
     _SUPPORTED_IDS = {"pmid", "doi"}
     _EXTENSION_TO_FILETYPE: Dict[str, FileType] = {
         "xml": FileType.XML,
@@ -94,7 +95,7 @@ class ElsevierExtractor(BaseExtractor):
     ) -> None:
         self.settings = settings or load_settings()
         self._client = client
-        self._cache = cache
+        self._cache = cache or FileCache(self._resolve_transport_cache_root())
 
     def download(
         self,
@@ -107,14 +108,12 @@ class ElsevierExtractor(BaseExtractor):
             return []
 
         prepared: List[Tuple[int, Identifier, Dict[str, str]]] = []
-        records: List[Dict[str, str]] = []
         results_by_index: Dict[int, DownloadResult] = {}
 
         for index, identifier in enumerate(identifiers):
             record = self._record_from_identifier(identifier)
             if record:
                 prepared.append((index, identifier, record))
-                records.append(record)
             else:
                 results_by_index[index] = self._build_failure_result(
                     identifier=identifier,
@@ -122,6 +121,7 @@ class ElsevierExtractor(BaseExtractor):
                         "Identifier is missing a DOI or PMID required for Elsevier download."
                     ),
                 )
+                emit_progress(progress_hook)
 
         if not prepared:
             default_builder = lambda identifier: self._build_failure_result(  # noqa: E731
@@ -135,83 +135,25 @@ class ElsevierExtractor(BaseExtractor):
                 progress_hook=progress_hook,
             )
 
+        base_dir = self._resolve_article_cache_root()
+
         try:
-            articles = list(self._run_download(records, progress_hook))
+            self._run_download(
+                prepared,
+                base_dir=base_dir,
+                results_by_index=results_by_index,
+                progress_hook=progress_hook,
+            )
         except Exception as exc:  # pragma: no cover - surfaced to caller
             failure_reason = str(exc) or "Unknown Elsevier download failure."
             for original_index, identifier, _ in prepared:
+                if original_index in results_by_index:
+                    continue
                 results_by_index[original_index] = self._build_failure_result(
                     identifier=identifier,
                     error_message=failure_reason,
                 )
-            default_builder = lambda identifier: self._build_failure_result(  # noqa: E731
-                identifier=identifier,
-                error_message="Elsevier download did not produce a result.",
-            )
-            return self._ordered_results(
-                identifiers,
-                results_by_index,
-                default_builder,
-                progress_hook=progress_hook,
-            )
-
-        base_dir = Path(
-            self.settings.elsevier_cache_root or self.settings.get_cache_dir("elsevier")
-        )
-        base_dir.mkdir(parents=True, exist_ok=True)
-
-        articles_by_lookup: Dict[
-            Tuple[str | None, str | None],
-            Deque[Any],
-        ] = {}
-        for article in articles:
-            metadata = self._extract_metadata(article)
-            identifier_lookup = metadata.get("identifier_lookup") or {}
-            lookup_key = self._lookup_key(identifier_lookup)
-            if lookup_key == (None, None):
-                identifier_type = metadata.get("identifier_type")
-                identifier_value = metadata.get("identifier")
-                if identifier_type and identifier_value:
-                    lookup_key = self._lookup_key({str(identifier_type): str(identifier_value)})
-            articles_by_lookup.setdefault(lookup_key, deque()).append(article)
-
-        for prepared_index, (
-            original_index,
-            identifier,
-            record,
-        ) in enumerate(prepared):
-            lookup_type, lookup_value = self._primary_identifier(record)
-            cache_key = self._identifier_cache_key(identifier, original_index)
-            lookup_key = self._lookup_key(record)
-            queue = articles_by_lookup.get(lookup_key)
-            article = None
-            if queue:
-                article = queue.popleft()
-                if not queue:
-                    articles_by_lookup.pop(lookup_key, None)
-
-            actual_lookup_type = lookup_type
-            actual_lookup_value = lookup_value
-            if article is not None:
-                article_metadata = self._extract_metadata(article)
-                metadata_type = article_metadata.get("identifier_type")
-                metadata_value = article_metadata.get("identifier")
-                if metadata_type:
-                    actual_lookup_type = str(metadata_type)
-                if metadata_value:
-                    actual_lookup_value = str(metadata_value)
-
-            results_by_index[original_index] = self._build_download_result(
-                base_dir=base_dir,
-                cache_key=cache_key,
-                identifier=identifier,
-                record=record,
-                article=article,
-                index=prepared_index,
-                lookup_type=actual_lookup_type,
-                lookup_value=actual_lookup_value,
-            )
-            emit_progress(progress_hook)
+                emit_progress(progress_hook)
 
         default_builder = lambda identifier: self._build_failure_result(  # noqa: E731
             identifier=identifier,
@@ -256,46 +198,112 @@ class ElsevierExtractor(BaseExtractor):
 
     def _run_download(
         self,
-        records: List[Dict[str, str]],
+        prepared: List[Tuple[int, Identifier, Dict[str, str]]],
+        *,
+        base_dir: Path,
+        results_by_index: Dict[int, DownloadResult],
         progress_hook: Callable[[int], None] | None = None,
-    ) -> List[Any]:
+    ) -> None:
         elsevier_settings = self._build_elsevier_settings()
-        progress_proxy = _build_progress_callback(progress_hook) if progress_hook else None
 
-        async def _runner() -> List[Any]:
+        async def _runner() -> None:
+            async def _process(client: ScienceDirectClient) -> None:
+                for prepared_index, (original_index, identifier, record) in enumerate(prepared):
+                    results_by_index[original_index] = await self._download_single_record(
+                        client=client,
+                        base_dir=base_dir,
+                        original_index=original_index,
+                        prepared_index=prepared_index,
+                        identifier=identifier,
+                        record=record,
+                    )
+                    emit_progress(progress_hook)
+
             if self._client is None:
                 async with ScienceDirectClient(elsevier_settings) as client:
-                    return await download_articles(
-                        records,
-                        client=client,
-                        cache=self._cache,
-                        settings=elsevier_settings,
-                        progress_callback=progress_proxy,
-                    )
-            return await download_articles(
-                records,
-                client=self._client,
-                cache=self._cache,
-                settings=elsevier_settings,
-                progress_callback=progress_proxy,
-            )
+                    await _process(client)
+                    return
+            await _process(self._client)
 
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(_runner())
+            asyncio.run(_runner())
+            return
         if loop.is_running():  # pragma: no cover - defensive
             raise RuntimeError(
                 "ElsevierExtractor.download cannot run inside an active event loop."
             )
-        return loop.run_until_complete(_runner())
+        loop.run_until_complete(_runner())
+
+    async def _download_single_record(
+        self,
+        *,
+        client: ScienceDirectClient,
+        base_dir: Path,
+        original_index: int,
+        prepared_index: int,
+        identifier: Identifier,
+        record: Mapping[str, str],
+    ) -> DownloadResult:
+        lookup_type, lookup_value = self._primary_identifier(record)
+        actual_lookup_type = lookup_type
+        actual_lookup_value = lookup_value
+        cache_key = self._identifier_cache_key(identifier, original_index)
+
+        try:
+            article = await self._download_record_with_client(
+                client=client,
+                record=record,
+            )
+        except Exception as exc:
+            return self._build_failure_result(
+                identifier=identifier,
+                error_message=(
+                    "Elsevier failure for "
+                    f"{lookup_type}: {lookup_value}. Details: {exc}"
+                ),
+            )
+
+        if article is not None:
+            article_metadata = self._extract_metadata(article)
+            metadata_type = article_metadata.get("identifier_type")
+            metadata_value = article_metadata.get("identifier")
+            if metadata_type:
+                actual_lookup_type = str(metadata_type)
+            if metadata_value:
+                actual_lookup_value = str(metadata_value)
+
+        return self._build_download_result(
+            base_dir=base_dir,
+            cache_key=cache_key,
+            identifier=identifier,
+            record=record,
+            article=article,
+            index=prepared_index,
+            lookup_type=actual_lookup_type,
+            lookup_value=actual_lookup_value,
+        )
+
+    async def _download_record_with_client(
+        self,
+        *,
+        client: ScienceDirectClient,
+        record: Mapping[str, str],
+    ) -> ArticleContent | None:
+        return await _download_record(
+            record=record,
+            client=client,
+            cache=self._cache,
+            cache_namespace="articles",
+        )
 
     def _build_elsevier_settings(self) -> ElsevierSettings:
         overrides: Dict[str, str] = {}
         if self.settings.elsevier_api_key:
             overrides["ELSEVIER_API_KEY"] = self.settings.elsevier_api_key
 
-        cache_root = self.settings.elsevier_cache_root or self.settings.get_cache_dir("elsevier")
+        cache_root = self._resolve_article_cache_root()
         overrides["ELSEVIER_CACHE_DIR"] = str(cache_root)
 
         if self.settings.elsevier_http_proxy:
@@ -422,7 +430,7 @@ class ElsevierExtractor(BaseExtractor):
         has_payload = bool(payload)
         if has_payload:
             payload_path = article_dir / f"content.{extension}"
-            payload_path.write_bytes(payload)
+            self._write_bytes_atomic(payload_path, payload)
             files.append(
                 build_downloaded_file(
                     payload_path,
@@ -442,9 +450,9 @@ class ElsevierExtractor(BaseExtractor):
             metadata["doi"] = self._extract_doi(article)
 
         metadata_path = article_dir / "metadata.json"
-        metadata_path.write_text(
+        self._write_text_atomic(
+            metadata_path,
             json.dumps(metadata, indent=2, default=str),
-            encoding="utf-8",
         )
         files.append(
             build_downloaded_file(
@@ -524,6 +532,32 @@ class ElsevierExtractor(BaseExtractor):
             success=False,
             error_message=error_message,
         )
+
+    def _resolve_article_cache_root(self) -> Path:
+        root = Path(
+            self.settings.elsevier_cache_root or self.settings.get_cache_dir("elsevier")
+        )
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    def _resolve_transport_cache_root(self) -> Path:
+        root = self._resolve_article_cache_root() / "transport-cache"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    @staticmethod
+    def _write_bytes_atomic(path: Path, payload: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        tmp_path.write_bytes(payload)
+        tmp_path.replace(path)
+
+    @staticmethod
+    def _write_text_atomic(path: Path, payload: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        tmp_path.write_text(payload, encoding="utf-8")
+        tmp_path.replace(path)
 
     def _identifier_cache_key(self, identifier: Identifier, index: int) -> str:
         seed = identifier.slug.strip()
@@ -850,15 +884,3 @@ def _select_metadata_file(
         if downloaded.file_type is FileType.JSON and downloaded.file_path.name == "metadata.json":
             return downloaded
     return None
-
-
-def _build_progress_callback(
-    progress_hook: Callable[[int], None] | None,
-) -> Callable[[Mapping[str, str], Any | None, BaseException | None], None] | None:
-    if progress_hook is None:
-        return None
-
-    def _callback(record, article, error):
-        emit_progress(progress_hook)
-
-    return _callback

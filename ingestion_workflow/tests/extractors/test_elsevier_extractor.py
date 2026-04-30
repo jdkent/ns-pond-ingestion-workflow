@@ -41,23 +41,33 @@ def test_elsevier_download_mixed_success(monkeypatch, tmp_path):
     )
 
     extractor = ElsevierExtractor(settings=settings)
+    cache_root = extractor._resolve_article_cache_root()
+    progress_updates: list[int] = []
 
-    def fake_run_download(self, records, progress_hook=None):
-        assert len(records) == 3
-        articles = [
-            _make_fake_article(pmid="123456", identifier_type="pmid"),
-            _make_fake_article(doi="10.1234/success", identifier_type="doi"),
-        ]
-        if progress_hook:
-            for _ in articles:
-                progress_hook(1)
-        return articles
+    async def fake_download_record_with_client(self, *, client, record):
+        if record.get("doi") == "10.1234/success":
+            first_cache_key = self._identifier_cache_key(identifiers.identifiers[1], 1)
+            content_path = cache_root / first_cache_key / "content.xml"
+            assert content_path.exists(), "Expected the first successful article to be persisted"
+        if record.get("doi") == "10.1234/failed":
+            return None
+        if record.get("pmid") == "123456":
+            return _make_fake_article(pmid="123456", identifier_type="pmid")
+        return _make_fake_article(doi="10.1234/success", identifier_type="doi")
 
-    monkeypatch.setattr(ElsevierExtractor, "_run_download", fake_run_download)
+    monkeypatch.setattr(
+        ElsevierExtractor,
+        "_download_record_with_client",
+        fake_download_record_with_client,
+    )
 
-    results = extractor.download(identifiers)
+    results = extractor.download(
+        identifiers,
+        progress_hook=lambda count: progress_updates.append(count),
+    )
 
     assert len(results) == 3
+    assert progress_updates == [1, 1, 1]
 
     first, second, third = results
 
