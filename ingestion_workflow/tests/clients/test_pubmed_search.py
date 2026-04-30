@@ -140,6 +140,52 @@ def test_pubmed_request_json_handles_invalid_control_chars(monkeypatch):
     assert payload["esearchresult"]["ERROR"].startswith("Search Backend failed")
 
 
+def test_pubmed_request_json_retries_on_rate_limit(monkeypatch):
+    client = PubMedClient(email="tests@example.com")
+    sleep_calls = []
+
+    class DummyResponse:
+        def __init__(
+            self,
+            *,
+            status_code: int,
+            payload: dict | None = None,
+            headers: dict | None = None,
+        ) -> None:
+            self.status_code = status_code
+            self._payload = payload or {}
+            self.headers = headers or {}
+            self.text = "{}"
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                raise requests.HTTPError(
+                    f"{self.status_code} error",
+                    response=self,
+                )
+
+        def json(self):
+            return self._payload
+
+    responses = [
+        DummyResponse(status_code=429),
+        DummyResponse(status_code=429),
+        DummyResponse(
+            status_code=200,
+            payload={"esearchresult": {"count": "1", "idlist": ["12345"]}},
+        ),
+    ]
+
+    monkeypatch.setattr(client, "_rate_limit_sleep", lambda: None)
+    monkeypatch.setattr("ingestion_workflow.clients.pubmed.time.sleep", sleep_calls.append)
+    monkeypatch.setattr(client._session, "get", lambda *_args, **_kwargs: responses.pop(0))
+
+    payload = client._request_json("https://example.com", params=[])
+
+    assert payload["esearchresult"]["idlist"] == ["12345"]
+    assert sleep_calls == [1, 2]
+
+
 @pytest.mark.vcr()
 def test_pubmed_client_search_real_api():
     client = PubMedClient(email="tests@example.com", tool="ingestion-workflow-tests")
