@@ -21,6 +21,8 @@ PUBMED_REQUEST_LIMIT = 3  # requests per second (polite throttle)
 _MIN_REQUEST_INTERVAL = 1 / PUBMED_REQUEST_LIMIT
 ESEARCH_MAX_RESULTS = 10_000
 ESEARCH_CHUNK_SIZE = 1_000
+REQUEST_MAX_ATTEMPTS = 5
+MAX_RETRY_DELAY_SECONDS = 60
 
 
 class PubMedClient:
@@ -341,41 +343,96 @@ class PubMedClient:
         url: str,
         params: Mapping[str, str] | Sequence[Tuple[str, str]],
     ) -> Dict[str, object]:
-        self._rate_limit_sleep()
-        response = self._session.get(url, params=params, timeout=30)
-        response.raise_for_status()
-        try:
-            return response.json()
-        except ValueError as exc:
-            text = response.text
+        for attempt in range(1, REQUEST_MAX_ATTEMPTS + 1):
+            self._rate_limit_sleep()
             try:
-                import simplejson
-            except ImportError:
-                simplejson = None
+                response = self._session.get(url, params=params, timeout=30)
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                if attempt >= REQUEST_MAX_ATTEMPTS or not self._should_retry_request_error(exc):
+                    raise
+                self._sleep_before_retry(attempt, exc)
+                continue
 
-            if simplejson is not None:
+            try:
+                return response.json()
+            except ValueError as exc:
+                text = response.text
                 try:
-                    return simplejson.loads(text, strict=False)
-                except simplejson.JSONDecodeError:
-                    pass
+                    import simplejson
+                except ImportError:
+                    simplejson = None
 
-            cleaned = re.sub(r"[\x00-\x1f]", "", text or "")
-            try:
-                return json.loads(cleaned)
-            except json.JSONDecodeError:
-                raise ValueError(
-                    f"Failed to parse JSON response from {url}"
-                ) from exc
+                if simplejson is not None:
+                    try:
+                        return simplejson.loads(text, strict=False)
+                    except simplejson.JSONDecodeError:
+                        pass
+
+                cleaned = re.sub(r"[\x00-\x1f]", "", text or "")
+                try:
+                    return json.loads(cleaned)
+                except json.JSONDecodeError:
+                    raise ValueError(
+                        f"Failed to parse JSON response from {url}"
+                    ) from exc
+
+        raise RuntimeError(f"Failed to fetch JSON response from {url}")
 
     def _request_xml(
         self,
         url: str,
         params: Mapping[str, str] | Sequence[Tuple[str, str]],
     ) -> Dict[str, Any]:
-        self._rate_limit_sleep()
-        response = self._session.get(url, params=params, timeout=30)
-        response.raise_for_status()
-        return xmltodict.parse(response.text)
+        for attempt in range(1, REQUEST_MAX_ATTEMPTS + 1):
+            self._rate_limit_sleep()
+            try:
+                response = self._session.get(url, params=params, timeout=30)
+                response.raise_for_status()
+                return xmltodict.parse(response.text)
+            except requests.RequestException as exc:
+                if attempt >= REQUEST_MAX_ATTEMPTS or not self._should_retry_request_error(exc):
+                    raise
+                self._sleep_before_retry(attempt, exc)
+
+        raise RuntimeError(f"Failed to fetch XML response from {url}")
+
+    @staticmethod
+    def _should_retry_request_error(exc: requests.RequestException) -> bool:
+        if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
+            return True
+
+        if isinstance(exc, requests.HTTPError):
+            response = exc.response
+            if response is None:
+                return False
+            return response.status_code == 429 or 500 <= response.status_code < 600
+
+        return False
+
+    def _sleep_before_retry(
+        self,
+        attempt: int,
+        exc: requests.RequestException,
+    ) -> None:
+        response = getattr(exc, "response", None)
+        retry_after = None
+        if response is not None:
+            retry_after = response.headers.get("Retry-After")
+
+        delay = self._parse_retry_after(retry_after)
+        if delay is None:
+            delay = min(2 ** (attempt - 1), MAX_RETRY_DELAY_SECONDS)
+        time.sleep(delay)
+
+    @staticmethod
+    def _parse_retry_after(value: Optional[str]) -> Optional[float]:
+        if not value:
+            return None
+        try:
+            return max(0.0, min(float(value), MAX_RETRY_DELAY_SECONDS))
+        except ValueError:
+            return None
 
     def get_metadata(self, identifiers: List[Identifier]) -> Dict[str, ArticleMetadata]:
         """

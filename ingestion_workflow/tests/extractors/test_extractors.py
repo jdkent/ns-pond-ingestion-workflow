@@ -20,6 +20,37 @@ from ingestion_workflow.models import (
 )
 
 
+def _write_pubget_download_fixture(article_dir: Path) -> None:
+    article_dir.mkdir(parents=True, exist_ok=True)
+    article_dir.joinpath("article.xml").write_text(
+        "<article />",
+        encoding="utf-8",
+    )
+    tables_dir = article_dir / "tables"
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    tables_dir.joinpath("tables.xml").write_text(
+        "<tables />",
+        encoding="utf-8",
+    )
+    tables_dir.joinpath("table_000_info.json").write_text(
+        json.dumps(
+            {
+                "table_id": "tbl1",
+                "table_label": "Table 1",
+                "table_caption": "",
+                "table_foot": "",
+                "n_header_rows": 1,
+                "table_data_file": "table_000.csv",
+            }
+        ),
+        encoding="utf-8",
+    )
+    tables_dir.joinpath("table_000.csv").write_text(
+        "x,y,z\n1,2,3\n",
+        encoding="utf-8",
+    )
+
+
 @pytest.mark.usefixtures("manifest_identifiers")
 @pytest.mark.vcr()
 def test_elsevier_download_records_articles(tmp_path, manifest_identifiers):
@@ -83,34 +114,8 @@ def test_pubget_download_persists_article_and_tables(tmp_path, monkeypatch):
     articles_dir = download_dir.with_name("articles")
     bucket = article_bucket_from_pmcid(12345)
     article_dir = articles_dir / bucket / "pmcid_12345"
-    article_dir.mkdir(parents=True)
-    article_dir.joinpath("article.xml").write_text(
-        "<article />",
-        encoding="utf-8",
-    )
+    _write_pubget_download_fixture(article_dir)
     tables_dir = article_dir / "tables"
-    tables_dir.mkdir(parents=True)
-    tables_dir.joinpath("tables.xml").write_text(
-        "<tables />",
-        encoding="utf-8",
-    )
-    tables_dir.joinpath("table_000_info.json").write_text(
-        json.dumps(
-            {
-                "table_id": "tbl1",
-                "table_label": "Table 1",
-                "table_caption": "",
-                "table_foot": "",
-                "n_header_rows": 1,
-                "table_data_file": "table_000.csv",
-            }
-        ),
-        encoding="utf-8",
-    )
-    tables_dir.joinpath("table_000.csv").write_text(
-        "x,y,z\n1,2,3\n",
-        encoding="utf-8",
-    )
 
     captured: dict[str, tuple] = {}
 
@@ -210,6 +215,139 @@ def test_pubget_download_warns_on_incomplete_exit_codes(tmp_path, monkeypatch):
     assert result.success is True
     assert result.error_message is not None
     assert "incomplete" in result.error_message.lower()
+
+
+def test_pubget_download_chunks_large_pmcid_lists(tmp_path, monkeypatch):
+    identifiers = Identifiers(
+        [
+            Identifier(pmcid="PMC1"),
+            Identifier(pmcid="PMC1"),
+            Identifier(pmcid="PMC2"),
+            Identifier(pmcid="PMC3"),
+        ]
+    )
+
+    settings = Settings(
+        cache_root=tmp_path / "cache",
+        data_root=tmp_path / "data",
+        max_workers=2,
+        pubget_cache_root=tmp_path / "pubget_cache",
+    )
+
+    extractor = PubgetExtractor(settings=settings)
+
+    data_dir = settings.pubget_cache_root
+    assert data_dir is not None
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    calls: list[list[int]] = []
+
+    def fake_download(
+        pmcids: list[int],
+        *,
+        data_dir: Path,
+        api_key: str | None,
+        retmax: int,
+    ) -> tuple[Path, ExitCode]:
+        calls.append(pmcids)
+        download_dir = data_dir / f"pmcidList_{'_'.join(map(str, pmcids))}" / "articlesets"
+        download_dir.mkdir(parents=True, exist_ok=True)
+        return download_dir, ExitCode.COMPLETED
+
+    def fake_extract(articlesets_dir: Path, *, n_jobs: int) -> tuple[Path, ExitCode]:
+        articles_dir = articlesets_dir.with_name("articles")
+        pmcids = articlesets_dir.parent.name.replace("pmcidList_", "").split("_")
+        for pmcid_str in pmcids:
+            bucket = article_bucket_from_pmcid(int(pmcid_str))
+            article_dir = articles_dir / bucket / f"pmcid_{pmcid_str}"
+            _write_pubget_download_fixture(article_dir)
+        return articles_dir, ExitCode.COMPLETED
+
+    monkeypatch.setattr(
+        "ingestion_workflow.extractors.pubget_extractor.download_pmcids",
+        fake_download,
+    )
+    monkeypatch.setattr(
+        "ingestion_workflow.extractors.pubget_extractor.extract_articles",
+        fake_extract,
+    )
+    monkeypatch.setattr(
+        "ingestion_workflow.extractors.pubget_extractor.PUBGET_PMCID_BATCH_SIZE",
+        2,
+    )
+
+    results = extractor.download(identifiers)
+
+    assert calls == [[1, 2], [3]]
+    assert len(results) == 4
+    assert all(result.success for result in results)
+    assert [result.identifier for result in results] == identifiers.identifiers
+
+
+def test_pubget_download_emits_progress_per_identifier(tmp_path, monkeypatch):
+    identifiers = Identifiers(
+        [
+            Identifier(pmcid="PMC1"),
+            Identifier(pmcid="PMC1"),
+            Identifier(pmcid="PMC2"),
+            Identifier(pmcid="PMC3"),
+        ]
+    )
+
+    settings = Settings(
+        cache_root=tmp_path / "cache",
+        data_root=tmp_path / "data",
+        max_workers=2,
+        pubget_cache_root=tmp_path / "pubget_cache",
+    )
+
+    extractor = PubgetExtractor(settings=settings)
+
+    data_dir = settings.pubget_cache_root
+    assert data_dir is not None
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    def fake_download(
+        pmcids: list[int],
+        *,
+        data_dir: Path,
+        api_key: str | None,
+        retmax: int,
+    ) -> tuple[Path, ExitCode]:
+        download_dir = data_dir / f"pmcidList_{'_'.join(map(str, pmcids))}" / "articlesets"
+        download_dir.mkdir(parents=True, exist_ok=True)
+        return download_dir, ExitCode.COMPLETED
+
+    def fake_extract(articlesets_dir: Path, *, n_jobs: int) -> tuple[Path, ExitCode]:
+        articles_dir = articlesets_dir.with_name("articles")
+        pmcids = articlesets_dir.parent.name.replace("pmcidList_", "").split("_")
+        for pmcid_str in pmcids:
+            bucket = article_bucket_from_pmcid(int(pmcid_str))
+            article_dir = articles_dir / bucket / f"pmcid_{pmcid_str}"
+            _write_pubget_download_fixture(article_dir)
+        return articles_dir, ExitCode.COMPLETED
+
+    monkeypatch.setattr(
+        "ingestion_workflow.extractors.pubget_extractor.download_pmcids",
+        fake_download,
+    )
+    monkeypatch.setattr(
+        "ingestion_workflow.extractors.pubget_extractor.extract_articles",
+        fake_extract,
+    )
+    monkeypatch.setattr(
+        "ingestion_workflow.extractors.pubget_extractor.PUBGET_PMCID_BATCH_SIZE",
+        2,
+    )
+
+    progress_updates: list[int] = []
+    results = extractor.download(
+        identifiers,
+        progress_hook=lambda step=1: progress_updates.append(step),
+    )
+
+    assert len(results) == 4
+    assert progress_updates == [1, 1, 1, 1]
 
 
 def test_pubget_extract_translates_tables(tmp_path):

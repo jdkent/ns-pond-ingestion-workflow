@@ -55,6 +55,48 @@ EXTRACTOR_FACTORIES: Dict[DownloadSource, ExtractorFactory] = {
 }
 
 
+def _cache_successful_downloads(
+    settings: Settings,
+    source: DownloadSource,
+    results: Sequence[DownloadResult],
+) -> List[DownloadResult]:
+    successes = [result for result in results if result.success]
+    if successes:
+        cache.cache_download_results(
+            settings,
+            extractor_name=source.value,
+            results=successes,
+        )
+    return successes
+
+
+def _download_in_batches(
+    extractor: BaseExtractor,
+    identifiers: Sequence[Identifier],
+    *,
+    settings: Settings,
+    source: DownloadSource,
+    progress_hook,
+) -> List[DownloadResult]:
+    batch_size = getattr(extractor, "DOWNLOAD_BATCH_SIZE", None)
+    if not batch_size or batch_size <= 0 or len(identifiers) <= batch_size:
+        return extractor.download(
+            Identifiers(list(identifiers)),
+            progress_hook=progress_hook,
+        )
+
+    download_results: List[DownloadResult] = []
+    for start in range(0, len(identifiers), batch_size):
+        batch = identifiers[start : start + batch_size]
+        batch_results = extractor.download(
+            Identifiers(list(batch)),
+            progress_hook=progress_hook,
+        )
+        _cache_successful_downloads(settings, source, batch_results)
+        download_results.extend(batch_results)
+    return download_results
+
+
 def _resolve_extractor(source: DownloadSource, settings: Settings) -> BaseExtractor:
     """Resolve the configured extractor implementation for a download source."""
     try:
@@ -203,8 +245,11 @@ def run_downloads(
 
         progress_hook = progress_callback(progress)
         try:
-            download_results = extractor.download(
-                Identifiers(list(missing)),
+            download_results = _download_in_batches(
+                extractor,
+                list(missing),
+                settings=resolved_settings,
+                source=source,
                 progress_hook=progress_hook,
             )
         finally:
@@ -227,12 +272,14 @@ def run_downloads(
         for result in download_results:
             collected_results.append(result)
 
-        successes = [result for result in download_results if result.success]
-        if successes:
-            cache.cache_download_results(
+        batch_size = getattr(extractor, "DOWNLOAD_BATCH_SIZE", None)
+        if batch_size and batch_size > 0 and pending_count > batch_size:
+            successes = [result for result in download_results if result.success]
+        else:
+            successes = _cache_successful_downloads(
                 resolved_settings,
-                extractor_name=source.value,
-                results=successes,
+                source,
+                download_results,
             )
 
         successful_slugs.update(
